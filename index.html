@@ -1,0 +1,3166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Flusso">
+<title>Flusso</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;1,6..72,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --black:#000; --paper:#ecebe6; --red:#e0352b; --grey:#8f8d87; --dim:#55534f; --line:rgba(236,235,230,.22);
+    font-family:"Newsreader", Georgia, "Times New Roman", serif; font-size:17px;
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--black); color:var(--paper); overflow:hidden; -webkit-font-smoothing:antialiased; }
+  body.idle { cursor:none; }
+
+  /* Stage: video players, image canvas, text */
+  #stage { position:fixed; inset:0; background:var(--black); }
+  #stage video { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:var(--black); opacity:0; }
+  #stage.fill video { object-fit:cover; }
+  #stage video.on { opacity:1; filter:blur(var(--blur, 0px)); }
+  #screen { position:absolute; inset:0; width:100%; height:100%; display:none; filter:blur(var(--blur, 0px)); }
+  body.m-image #screen { display:block; }
+  #textScreen { position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+                padding:9vh 8vw 20vh; text-align:center; filter:blur(var(--blur, 0px)); }
+  body.m-text #textScreen { display:flex; }
+  #textScreen p { margin:0; max-width:26em; line-height:1.14; text-wrap:balance; overflow-wrap:anywhere; letter-spacing:-.005em; }
+  #audioScreen { position:absolute; inset:0; display:none; align-items:center; justify-content:center; filter:blur(var(--blur, 0px)); }
+  body.m-audio #audioScreen { display:flex; }
+  .pulse { width:14vmin; height:14vmin; max-width:120px; max-height:120px; border:1px solid var(--paper); border-radius:50%; opacity:.35; animation:breathe 3.2s ease-in-out infinite; }
+  body.paused .pulse { animation-play-state:paused; }
+  @keyframes breathe { 0%,100% { transform:scale(1); opacity:.35; } 50% { transform:scale(1.12); opacity:.75; } }
+  @media (prefers-reduced-motion:reduce) { .pulse { animation:none; opacity:.5; } }
+
+  button, input { font:inherit; color:inherit; background:none; border:0; padding:.2em .1em; }
+  button { cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+  button:focus-visible, a:focus-visible, input[type=text]:focus-visible { outline:1px solid var(--paper); outline-offset:3px; }
+  a { color:inherit; text-decoration-color:var(--line); text-underline-offset:3px; }
+  a:hover { text-decoration-color:var(--paper); }
+
+  /* Intro: the three PLAYs */
+  #intro { position:fixed; inset:0; z-index:5; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1.1rem; background:var(--black); }
+  #intro button { font-size:clamp(1.1rem,2.6vw,1.7rem); letter-spacing:.3em; padding:.3em .1em .3em .4em; line-height:1; }
+  #intro button:hover { font-style:italic; color:var(--red); }
+  body:not(.intro) #intro { display:none; }
+  body.intro #controls, body.intro #caption { display:none; }
+
+  #caption { position:fixed; z-index:2; left:max(1.4rem, env(safe-area-inset-left,0px));
+             bottom:var(--ch, calc(4.6rem + env(safe-area-inset-bottom,0px))); max-width:min(34em,86vw);
+             font-size:.95rem; line-height:1.35; text-shadow:0 0 12px rgba(0,0,0,.9), 0 0 2px rgba(0,0,0,.9); }
+  #caption .t { font-style:italic; }
+  #caption .m { color:var(--grey); }
+  #caption.hidden { display:none; }
+  body.idle #caption { bottom:calc(1.2rem + env(safe-area-inset-bottom,0px)); }
+  body.panel #caption { display:none; }
+
+  #controls { position:fixed; left:0; right:0; bottom:0; z-index:2; display:flex; flex-wrap:wrap; align-items:baseline; gap:.6rem 2rem;
+              padding:2.4rem max(1.4rem, env(safe-area-inset-right,0px)) calc(1.1rem + env(safe-area-inset-bottom,0px)) max(1.4rem, env(safe-area-inset-left,0px));
+              background:linear-gradient(to top, rgba(0,0,0,.9) 60%, rgba(0,0,0,0)); font-size:.95rem; transition:opacity .4s; }
+  body.idle #controls { opacity:0; pointer-events:none; }
+  .group { display:flex; align-items:baseline; gap:.35rem; flex-wrap:wrap; }
+  .lab { color:var(--grey); margin-right:.3rem; }
+  #modes button, #speeds button { color:var(--dim); min-width:1.3em; font-variant-numeric:tabular-nums; }
+  #modes button[aria-pressed="true"], #speeds button[aria-pressed="true"] { color:var(--paper); border-bottom:1px solid var(--paper); }
+  #bWhat { border-bottom:1px solid var(--line); max-width:22em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; }
+  .push { margin-left:auto; }
+  .actions { display:flex; flex-wrap:wrap; gap:.4rem 1.2rem; }
+  .actions button { color:var(--grey); }
+  body:not(.m-video):not(.m-audio) #bSound { display:none; }
+  body.m-text #bFit, body.m-audio #bFit { display:none; }
+  .retry { color:var(--grey); border-bottom:1px solid var(--grey); padding:0; margin-left:.4em; font-size:.85rem; }
+  /* Grey at rest, red on hover (change --red at the top), white when selected */
+  #controls button:hover, #sourceList label:hover span { color:var(--red) !important; }
+  #controls button[aria-pressed="true"]:hover { color:var(--paper) !important; }
+  #sourceList label:hover .box { border-color:var(--red); }
+  #blurRange { width:8rem; accent-color:var(--grey); cursor:pointer; vertical-align:middle; }
+  #blurRange:hover { accent-color:var(--red); }
+  #blurValue { color:var(--grey); min-width:3.2em; font-variant-numeric:tabular-nums; }
+
+  /* Panel */
+  #panel { flex-basis:100%; display:none; max-height:55vh; overflow-y:auto; padding-bottom:1rem; border-bottom:1px solid var(--line); margin-bottom:.4rem; }
+  body.panel #panel { display:grid; grid-template-columns:repeat(auto-fit, minmax(16rem, 1fr)); gap:1.2rem 2.5rem; }
+  #panel h2 { font-size:.95rem; font-weight:400; color:var(--grey); margin:0 0 .5rem; }
+  .chips { display:flex; flex-wrap:wrap; gap:.25rem .9rem; align-items:baseline; }
+  #bAll { color:var(--dim); }
+  #bAll[aria-pressed="true"] { color:var(--paper); border-bottom:1px solid var(--paper); }
+  #srcToggle[aria-expanded="true"] { color:var(--paper); border-bottom:1px solid var(--paper); }
+  #sourceBody { margin-top:.5rem; }
+  #sourceBody > .chips { margin-bottom:.5rem; }
+  #wordInput { width:100%; border-bottom:1px solid var(--line); padding:.3em 0; margin:.4rem 0 .5rem; font-size:max(16px, 1rem); }
+  #wordInput::placeholder { color:var(--dim); }
+  #wordChips button { color:var(--paper); padding:.1em 0; }
+  #wordChips button::after { content:" ×"; color:var(--grey); }
+  .note { color:var(--dim); font-size:.85rem; }
+  #sourceList { list-style:none; margin:0; padding:0; columns:2 11rem; column-gap:1.5rem; }
+  #sourceList li { padding:.15rem 0; break-inside:avoid; }
+  #sourceList label { cursor:pointer; display:inline-flex; gap:.5rem; align-items:baseline; }
+  #sourceList input { position:absolute; opacity:0; width:1px; height:1px; }
+  .box { display:inline-block; width:.7em; height:.7em; border:1px solid var(--grey); transform:translateY(.05em); flex:none; }
+  #sourceList input:checked ~ .box { background:var(--paper); border-color:var(--paper); }
+  #sourceList input:focus-visible ~ .box { outline:1px solid var(--paper); outline-offset:3px; }
+  #sourceList input:disabled ~ span { color:var(--dim); }
+  #sourceList .note { display:block; margin-left:1.2em; }
+  .mini { font-size:.8rem; color:var(--dim); padding:0 .35em; }
+
+  /* About */
+  #about { position:fixed; inset:0; z-index:6; background:rgba(0,0,0,.94); overflow-y:auto; cursor:pointer;
+           padding:max(9vh, calc(1.5rem + env(safe-area-inset-top,0px))) 7vw calc(4rem + env(safe-area-inset-bottom,0px)); }
+  #about[hidden] { display:none; }
+  #about .inner { max-width:34em; }
+  #about h2 { margin:0; font-weight:400; font-style:italic; font-size:clamp(2.4rem,7vw,4.5rem); line-height:.95; letter-spacing:-.01em; }
+  #about .by { margin:.6rem 0 2.2rem; color:var(--grey); }
+  #about p { line-height:1.6; margin:0 0 1.1rem; }
+  #about .small { color:var(--grey); font-size:.9rem; }
+  #aboutClose { position:fixed; top:max(1.2rem, env(safe-area-inset-top,0px)); right:max(1.4rem, env(safe-area-inset-right,0px)); color:var(--grey); padding:.4em .2em; }
+  #aboutClose:hover { color:var(--red); }
+
+  /* Phones and tablets */
+  @media (max-width:700px), (pointer:coarse) {
+    :root { font-size:16px; }
+    #controls { gap:.2rem 1rem; padding-top:1.8rem; }
+    .group { flex-basis:100%; }
+    #speeds { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+    #speeds::-webkit-scrollbar { display:none; }
+    #speeds button, #modes button, .actions button, #bWhat, #bAll, #wordChips button, .retry { padding:.5em .3em; }
+    #speeds button { min-width:2.1em; flex:none; }
+    #bWhat { max-width:70vw; }
+    .push { margin-left:0; }
+    .actions { gap:0 .7rem; }
+    body.panel #panel { max-height:62vh; grid-template-columns:1fr; gap:1rem; }
+    #sourceList { columns:1; }
+    #sourceList label { padding:.35em 0; }
+    #textScreen { padding:8vh 7vw 30vh; }
+  }
+  @media (prefers-reduced-motion:reduce) { #controls { transition:none; } }
+</style>
+</head>
+<body class="intro">
+
+<div id="stage">
+  <canvas id="screen"></canvas>
+  <div id="textScreen"><p id="textP" dir="auto"></p></div>
+  <div id="audioScreen"><div class="pulse"></div></div>
+</div>
+
+<div id="intro">
+  <button data-mode="video">PLAY VIDEO</button>
+  <button data-mode="image">PLAY IMAGE</button>
+  <button data-mode="text">PLAY TEXT</button>
+  <button data-mode="audio">PLAY AUDIO</button>
+</div>
+
+<div id="caption" aria-live="polite"></div>
+
+<!-- ABOUT: the text below can be edited freely -->
+<div id="about" role="dialog" aria-modal="true" aria-labelledby="aboutTitle" hidden>
+  <button id="aboutClose">close</button>
+  <div class="inner">
+    <h2 id="aboutTitle">Flusso</h2>
+    <p class="by">A project by Jacopo Natoli</p>
+    <p>Flusso is an endless montage of fragments taken at random from open archives, museum collections, libraries, news, social networks, video and audio platforms across the web. It comes in four forms: video, still images, text and sound.</p>
+    <p>Nothing is chosen in advance. The viewer only sets the conditions: the rhythm, what to look for, how much to blur, which sources to draw from. The rest is left to chance, and to what people have put online.</p>
+    <p>Every fragment keeps its origin. The caption names its title, author, year and source, with a link back to the original.</p>
+    <p class="small">Video sources: <span id="aboutVideo"></span>.</p>
+    <p class="small">Image sources: <span id="aboutImage"></span>.</p>
+    <p class="small">Text sources: <span id="aboutText"></span>.</p>
+    <p class="small">Audio sources: <span id="aboutAudio"></span>.</p>
+    <p class="small">Warning: at the fastest speeds images and texts flash rapidly, which may affect people with photosensitive epilepsy.</p>
+    <p class="small">All fragments belong to their authors and are shown from the original archives, under their licences and terms of use.</p>
+  </div>
+</div>
+
+<div id="controls">
+  <div id="panel">
+    <section>
+      <h2>what</h2>
+      <div class="chips"><button id="bAll" aria-pressed="true">ALL</button></div>
+      <input type="text" id="wordInput" placeholder="type a word and press enter" autocomplete="off" enterkeyhint="done">
+      <div class="chips" id="wordChips"></div>
+    </section>
+    <section>
+      <h2><button id="srcToggle" aria-expanded="false" aria-controls="sourceBody">sources</button></h2>
+      <div id="sourceBody" hidden>
+        <div class="chips"><button id="srcAll" class="mini">all</button><button id="srcNone" class="mini">none</button></div>
+        <ul id="sourceList"></ul>
+      </div>
+    </section>
+  </div>
+  <div class="group" id="modes" role="group" aria-label="Mode">
+    <button data-mode="video">video</button>
+    <button data-mode="image">image</button>
+    <button data-mode="text">text</button>
+    <button data-mode="audio">audio</button>
+  </div>
+  <div class="group">
+    <span class="lab">blur</span>
+    <input type="range" id="blurRange" min="0" max="40" step="1" value="0" aria-label="Blur">
+    <span id="blurValue">off</span>
+  </div>
+  <div class="group" id="speeds" role="group" aria-label="Seconds per fragment">
+    <span class="lab">seconds</span>
+  </div>
+  <div class="group">
+    <span class="lab">what</span>
+    <button id="bWhat" aria-expanded="false" aria-controls="panel">ALL</button>
+  </div>
+  <div class="actions push">
+    <button id="bSound">sound on</button>
+    <button id="bPause">pause</button>
+    <button id="bSkip">skip</button>
+    <button id="bFit">fill</button>
+    <button id="bCaption">caption on</button>
+    <button id="bFull">fullscreen</button>
+    <button id="bAbout">about</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   SETTINGS — edit freely
+   ============================================================ */
+
+// Free API keys for the sources that need one. Empty key = source switched off.
+// Keys written here are visible to anyone who reads the page source.
+const KEYS = {
+  // video and images
+  pexels:      "",           // pexels.com/api
+  pixabay:     "57943986-8bcff37677890fec525efe997",           // pixabay.com/api/docs
+  giphy:       "",           // developers.giphy.com
+  imgur:       "",           // api.imgur.com/oauth2/addclient (Client ID)
+  flickr:      "",           // flickr.com/services/apps/create (needs Flickr Pro)
+  klipy:       "AD34R62mCYA022aGCNhEr1yAfNscjOgXdbCy0xR2qxK8QK3ZaIfQxSeNluX2tXLb",           // klipy.com/developers (video only)
+  unsplash:    "",           // unsplash.com/developers (images only)
+  windy:       "zbwJpSH6n60j5QttXOUE6Me3o6MvRAb9",           // api.windy.com/keys (live webcams, images only)
+  harvard:     "",           // harvardartmuseums.org/collections/api (images only)
+  dpla:        "",           // pro.dp.la/developers/api-codex (images only)
+  tumblr:      "wyZAJsWWKHGnZZzGPYnhVrdZVnZF4lB8xuTkcyW2W1xORGmg9V",           // tumblr.com/oauth/apps -> "OAuth Consumer Key" (video, images and text)
+  nasa:        "DEMO_KEY",   // public demo key; get your own at api.nasa.gov (Astronomy Picture of the Day)
+  europeana:   "api2demo",   // public demo key; get your own at pro.europeana.eu
+  smithsonian: "DEMO_KEY",   // public demo key (limited per visitor); get your own at api.data.gov
+  // text
+  guardian:    "test",       // public test key; get your own at open-platform.theguardian.com
+  nyt:         "igg82yKNQu8hB0AoCKy6PjCN9tYHldWbCTpXhHIvMxwaCG5G",           // developer.nytimes.com
+  openalex:    "hwhknUEp7t9GTwCvh9UeuW",           // openalex.org/settings/api (free account)
+  // audio
+  freesound:   "eQmaxPvONgGqAxAHNCILXVFdPwkHXgg8M5XohxjM",           // freesound.org/apiv2/apply
+  jamendo:     "",           // devportal.jamendo.com (Client ID)
+  xenocanto:   "demo"        // public demo key (shared, may be rate-limited); get your own at xeno-canto.org/account
+};
+
+// Words used for "ALL" on sources that can't search with an empty query.
+const RANDOM_WORDS = ["home", "day", "people", "water", "light", "window", "garden", "party", "walk", "morning",
+  "table", "road", "sky", "hand", "door", "music", "family", "room", "tree", "sun", "red", "blue", "old", "new",
+  "dog", "cat", "car", "rain", "sea", "city", "night", "kitchen", "street", "friends", "birthday", "snow", "face", "chair",
+  "love", "time", "money", "work", "dream", "war", "bread", "letter", "river", "voice"];
+
+const MASTODON_INSTANCES = ["mastodon.social", "mastodon.online", "mstdn.social", "mas.to", "mastodon.world", "universeodon.com", "mastodon.nl",
+  "techhub.social", "mastodon.scot", "toot.community", "hachyderm.io", "sfba.social", "mastodon.cloud"];
+const PIXELFED_INSTANCES = ["pixelfed.social", "pixelfed.de", "pixey.org", "pixelfed.art", "pixelfed.uno", "pixel.tchncs.de"];
+const LEMMY_INSTANCES    = ["lemmy.world", "lemmy.ml", "sh.itjust.works", "lemmy.zip", "feddit.org", "lemmy.ca", "lemmy.blahaj.zone", "programming.dev",
+  "lemmy.dbzer0.com", "lemmy.today", "discuss.online", "beehaw.org", "sopuli.xyz", "reddthat.com", "lemmings.world"];
+const WIKI_LANGS = ["en", "it", "fr", "de", "es", "pt", "nl", "pl", "sv", "ru", "ja", "zh", "ar", "tr", "ko", "fi", "cs", "el", "he", "id"];
+
+const IS_MOBILE = matchMedia("(pointer:coarse)").matches || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+const SAVE_DATA = !!navigator.connection?.saveData;
+const TARGET_HEIGHT = IS_MOBILE ? 360 : 480;               // video quality: lower = faster loading
+const IMG_WIDTH     = IS_MOBILE ? 720 : 1024;              // preferred image width
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+const $ = (s) => document.querySelector(s);
+const testVideo = document.createElement("video");
+const canPlay = (type) => !!type && /maybe|probably/.test(testVideo.canPlayType(type));
+const testAudio = document.createElement("audio");
+const canPlayAudio = (type) => !!type && /maybe|probably/.test(testAudio.canPlayType(type));
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+const rint = (n) => Math.floor(Math.random() * n);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const https = (u) => String(u || "").replace(/^http:\/\//i, "https://").replace(/ /g, "%20");
+const asText = (v) => Array.isArray(v) ? v[0] : v;
+const qs = (o) => new URLSearchParams(o).toString();
+const year = (v) => (String(v || "").match(/\d{4}/) || [""])[0];
+const isStillImage = (u) => /\.(jpe?g|png|webp)(\?|#|$)/i.test(u);
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = rint(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function stripHTML(html) {
+  if (!html) return "";
+  return (new DOMParser().parseFromString(String(html), "text/html").body.textContent || "").replace(/\s+/g, " ").trim();
+}
+function closestHeight(files, getH) {
+  return files.slice().sort((a, b) => Math.abs((getH(a) || 9999) - TARGET_HEIGHT) - Math.abs((getH(b) || 9999) - TARGET_HEIGHT))[0];
+}
+function findVideoUrl(obj) {
+  const found = [];
+  const walk = (o, depth) => {
+    if (!o || depth > 8 || found.length > 30) return;
+    if (typeof o === "string") { if (/^https?:\/\/\S+\.(mp4|m4v|webm)(\?\S*)?$/i.test(o)) found.push(o); return; }
+    if (typeof o === "object") for (const v of Object.values(o)) walk(v, depth + 1);
+  };
+  walk(obj, 0);
+  const mp4 = found.filter(u => /\.mp4/i.test(u));
+  return (mp4.length ? mp4 : found)[0] || null;
+}
+async function fetchRaw(url, opts = {}, ms = 12000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const r = await fetch(url, { ...opts, signal: ctrl.signal });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r;
+  } finally { clearTimeout(t); }
+}
+const fetchJSON = async (url, opts, ms) => (await fetchRaw(url, opts, ms)).json();
+const fetchText = async (url, opts, ms) => (await fetchRaw(url, opts, ms)).text();
+
+const totals = {}, vtotals = {};
+async function total(key, getter) {   // caches the number of results of a search
+  if (totals[key] == null) totals[key] = (await getter()) || 0;
+  return totals[key];
+}
+// For networks made of many servers: a server that refuses is skipped, the source stays on
+const badServer = {};
+async function fromServers(servers, path, ms = 10000) {
+  const ok = servers.filter(h => !(badServer[h] > Date.now()));
+  if (!ok.length) throw new Error("all servers refused");
+  const host = pick(ok);
+  try { return await fetchJSON(`https://${host}${path}`, {}, ms); }
+  catch (e) { badServer[host] = Date.now() + 15 * 60 * 1000; throw e; }
+}
+
+/* ============================================================
+   SHARED UI STATE
+   ============================================================ */
+const ui = {
+  mode: null, words: [], blur: 0, fill: false,
+  speed: { video: 3, image: 0.25, text: 1, audio: 3 },
+  muted: false, paused: false, started: false
+};
+const cleanWord = (w) => String(w).toLowerCase().replace(/[*"\\]/g, "").replace(/\s+/g, " ").trim().slice(0, 40);
+const currentTerms = () => ui.words.length ? ui.words : null;
+
+/* ============================================================
+   SOURCE MANAGER (one per mode)
+   Keeps the results of each search, pauses sources that keep
+   failing, and hands out one fragment at a time.
+   ============================================================ */
+function errorReason(e) {
+  if (!e) return "fragments would not load";
+  if (e.name === "AbortError") return "too slow";
+  const m = /HTTP (\d+)/.exec(e.message || "");
+  if (m) return m[1] === "429" ? "request limit reached" : (m[1] === "401" || m[1] === "403") ? `refused (${m[1]})` : `error ${m[1]}`;
+  if (e instanceof TypeError) return "blocked by the site or offline";
+  return e.message || "error";
+}
+
+function makeSourceSet(SOURCES) {
+  const set = { SOURCES, enabled: {}, pools: {}, inflight: {}, misses: {}, dead: {}, seen: new Set(), seenOrder: [] };
+  for (const [k, s] of Object.entries(SOURCES)) {
+    s.fails = 0; s.downUntil = 0; s.downCount = 0; s.reason = "";
+    set.enabled[k] = !s.defaultOff;
+  }
+  set.hasKey = (k) => !SOURCES[k].needs || !!KEYS[SOURCES[k].needs];
+  set.liveTerms = (k) => {
+    const terms = currentTerms();
+    if (!terms) return set.dead[k + "|*"] ? [] : ["*"];
+    return terms.filter(t => !set.dead[k + "|" + t]);
+  };
+  set.status = (k) => {
+    if (!set.hasKey(k)) return "needs a key";
+    const s = SOURCES[k];
+    if (s.downUntil > Date.now()) return `paused: ${s.reason || "not responding"}, retry in ${Math.ceil((s.downUntil - Date.now()) / 60000)} min`;
+    if (!set.liveTerms(k).length) return "nothing found for this";
+    return "";
+  };
+  set.available = () => Object.keys(SOURCES).filter(k => set.enabled[k] && set.status(k) === "");
+  set.noteFail = (k, weight = 1, err) => {
+    const s = SOURCES[k];
+    s.fails += weight;
+    s.reason = errorReason(err);
+    if (s.fails >= 5) {
+      s.fails = 0;
+      s.downUntil = Date.now() + Math.min(20, 2 * 2 ** s.downCount) * 60 * 1000;
+      s.downCount++;
+      renderSources();
+    }
+  };
+  set.fillPool = async (k, term) => {
+    const pk = k + "|" + term;
+    const pool = set.pools[pk] || (set.pools[pk] = []);
+    if (pool.length) return pool;
+    if (!set.inflight[pk]) {
+      set.inflight[pk] = (async () => {
+        const got = await SOURCES[k].search(term === "*" ? null : term);
+        if (!got.length) {
+          set.misses[pk] = (set.misses[pk] || 0) + 1;
+          if (set.misses[pk] >= 3) { set.dead[pk] = true; renderSources(); }
+          return;
+        }
+        set.misses[pk] = 0;
+        pool.push(...shuffle(got));
+      })().finally(() => { delete set.inflight[pk]; });
+    }
+    await set.inflight[pk];
+    return pool;
+  };
+  set.getItem = async () => {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const avail = set.available();
+      if (!avail.length) return null;
+      const k = pick(avail);
+      const live = set.liveTerms(k);
+      if (!live.length) continue;
+      try {
+        const pool = await set.fillPool(k, pick(live));
+        const c = pool.pop();
+        if (!c) continue;
+        let item = c;
+        if (SOURCES[k].resolve) {
+          try { item = await SOURCES[k].resolve(c); } catch (e) { set.noteFail(k, 0.5, e); continue; }
+        }
+        const id = item && (item.url || item.text);
+        if (!id || set.seen.has(id)) continue;
+        set.seen.add(id); set.seenOrder.push(id);
+        if (set.seenOrder.length > 3000) set.seen.delete(set.seenOrder.shift());
+        item.key = k;
+        item.source = SOURCES[k].label + (item.via ? " / " + item.via : "") + (SOURCES[k].note ? " (" + SOURCES[k].note + ")" : "");
+        return item;
+      } catch (e) { set.noteFail(k, 2, e); }
+    }
+    return null;
+  };
+  // Tests the sources in advance, so broken ones are set aside early
+  set.warmUp = (noKeyOnly = false) => {
+    let i = 0;
+    for (const k of set.available()) {
+      if (noKeyOnly && SOURCES[k].needs && !/demo|test/i.test(KEYS[SOURCES[k].needs])) continue;
+      setTimeout(() => {   // one source every 60 ms, so the network isn't flooded
+        if (!set.enabled[k] || set.status(k) !== "") return;
+        const live = set.liveTerms(k);
+        if (live.length) set.fillPool(k, pick(live)).catch((e) => set.noteFail(k, 3, e));
+      }, (i++) * 60);
+    }
+  };
+  return set;
+}
+
+/* ============================================================
+   EXTRA HELPERS (used by the additional sources)
+   ============================================================ */
+// JSONP: for APIs that don't send CORS headers but accept a callback (Tumblr)
+function jsonp(url, ms = 12000) {
+  return new Promise((resolve, reject) => {
+    const cb = "__jsonp_" + Math.random().toString(36).slice(2);
+    const s = document.createElement("script");
+    let t;
+    const done = () => { clearTimeout(t); delete window[cb]; s.remove(); };
+    t = setTimeout(() => { done(); const e = new Error("timeout"); e.name = "AbortError"; reject(e); }, ms);
+    window[cb] = (data) => { done(); resolve(data); };
+    s.onerror = () => { done(); reject(new TypeError("blocked")); };
+    s.src = url + (url.includes("?") ? "&" : "?") + "callback=" + cb;
+    document.head.appendChild(s);
+  });
+}
+
+// "CC_BY_4_0", "cc-by-nc", "https://creativecommons.org/licenses/by/4.0/" -> "CC BY 4.0"
+function licenseLabel(l) {
+  const s = String(l || "").trim();
+  if (!s) return "";
+  const m = /creativecommons\.org\/(licenses|publicdomain)\/([a-z-]+)(?:\/([\d.]+))?/i.exec(s);
+  if (m) return m[1] === "publicdomain" ? (m[2] === "zero" ? "CC0" : "public domain") : ("CC " + m[2].toUpperCase() + (m[3] ? " " + m[3] : ""));
+  if (/^cc0$/i.test(s)) return "CC0";
+  if (/^cc0?[_-]/i.test(s)) return s.replace(/[_-](\d)[_-](\d)$/, " $1.$2").replace(/[_-]/g, " ").toUpperCase().replace(/\s+/g, " ").trim();
+  return /^[a-z0-9 .\-]{2,24}$/i.test(s) ? s.toUpperCase() : "";
+}
+
+// OpenAlex stores abstracts as {word: [positions]}
+function abstractFrom(inv) {
+  if (!inv || typeof inv !== "object") return "";
+  const arr = [];
+  for (const [w, pos] of Object.entries(inv)) for (const i of pos) arr[i] = w;
+  return arr.filter(Boolean).join(" ");
+}
+
+/* ---- Bluesky: public feeds (no account) ---- */
+const BSKY = "https://public.api.bsky.app/xrpc/";
+const BSKY_BAD = new Set(["porn", "sexual", "nudity", "graphic-media", "gore", "self-harm", "spam", "!hide", "!warn", "!no-unauthenticated"]);
+const bskyFeeds = {};
+async function bskyPosts(term) {
+  const key = term || "*";
+  if (!bskyFeeds[key]) {
+    const g = await fetchJSON(BSKY + "app.bsky.unspecced.getPopularFeedGenerators?" + qs({ limit: "60", ...(term ? { query: term } : {}) }));
+    bskyFeeds[key] = (g.feeds || []).map(f => f.uri).filter(Boolean);
+  }
+  const feeds = bskyFeeds[key];
+  if (!feeds.length) return [];
+  let last = null;
+  for (const uri of shuffle(feeds.slice()).slice(0, 3)) {
+    try {
+      const f = await fetchJSON(BSKY + "app.bsky.feed.getFeed?" + qs({ feed: uri, limit: "100" }));
+      const posts = (f.feed || []).map(x => x.post).filter(p => p && p.record
+        && !(p.labels || []).some(l => BSKY_BAD.has(l.val))
+        && !(p.author?.labels || []).some(l => BSKY_BAD.has(l.val))
+        && !(p.record.labels?.values || []).length);
+      if (posts.length) return posts;
+    } catch (e) { last = e; }
+  }
+  if (last) throw last;
+  return [];
+}
+const bskyLink = (p) => `https://bsky.app/profile/${p.author?.handle}/post/${String(p.uri).split("/").pop()}`;
+function bskyImages(p) {
+  const e = p.embed;
+  const imgs = e?.images || e?.media?.images || [];
+  return imgs.map(i => ({ url: i.fullsize || i.thumb, alt: i.alt || "" })).filter(i => i.url);
+}
+
+/* ---- Tumblr: posts by tag (JSONP, needs a free key) ---- */
+const TUMBLR_BAD = /(nsfw|porn|xxx|adult|18\+|explicit|nude|naked|\bsex|lewd|hentai|gore|erotic|fetish|kink)/i;
+async function tumblrPosts(term) {
+  const tag = (term || pick(RANDOM_WORDS)).toLowerCase();
+  const before = Math.floor(Date.now() / 1000 - Math.random() * 12 * 365 * 86400);
+  const d = await jsonp("https://api.tumblr.com/v2/tagged?" + qs({ tag, api_key: KEYS.tumblr, limit: "20", before: String(before) }));
+  if (d.meta && d.meta.status && d.meta.status !== 200) throw new Error("HTTP " + d.meta.status);
+  return (Array.isArray(d.response) ? d.response : []).filter(p => !(p.tags || []).some(t => TUMBLR_BAD.test(t)) && !p.is_nsfw && !p.blog?.is_nsfw);
+}
+function tumblrMedia(p) {
+  const out = { images: [], videos: [] };
+  for (const ph of p.photos || []) {
+    const sizes = ph.alt_sizes || [];
+    const best = sizes.length ? sizes.slice().sort((a, b) => Math.abs(a.width - IMG_WIDTH) - Math.abs(b.width - IMG_WIDTH))[0] : ph.original_size;
+    if (best?.url) out.images.push(best.url);
+  }
+  if (p.video_url) out.videos.push(p.video_url);
+  const html = [p.body, p.caption, ...(p.trail || []).map(t => t.content_raw || t.content)].filter(Boolean).join(" ");
+  if (html) {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    doc.querySelectorAll("img").forEach(i => { const u = i.getAttribute("src"); if (u && /^https?:/.test(u)) out.images.push(u); });
+    doc.querySelectorAll("video, video source").forEach(v => { const u = v.getAttribute("src"); if (u && /^https?:.*\.(mp4|webm)/i.test(u)) out.videos.push(u); });
+  }
+  return out;
+}
+
+
+/* ============================================================
+   VIDEO SOURCES
+   ============================================================ */
+// Shared code for Mastodon-compatible networks (Mastodon, Pixelfed)
+function fediVideo(instances) {
+  return async (term) => {
+    const tag = (term || pick(RANDOM_WORDS)).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9_]/g, "");
+    if (!tag) return [];
+    const params = { only_media: "true", limit: "40" };
+    if (Math.random() < 0.6) {   // random point in the last four years
+      const ms = Date.now() - Math.random() * 4 * 365 * 864e5;
+      params.max_id = (BigInt(Math.floor(ms)) << 16n).toString();
+    }
+    const d = await fromServers(instances, `/api/v1/timelines/tag/${encodeURIComponent(tag)}?` + qs(params));
+    const out = [];
+    for (const s of Array.isArray(d) ? d : []) {
+      if (s.sensitive) continue;
+      for (const m of s.media_attachments || []) {
+        if ((m.type === "video" || m.type === "gifv") && m.url) {
+          out.push({ url: m.url, title: stripHTML(s.content).slice(0, 90) || "#" + tag,
+                     author: s.account?.display_name || s.account?.acct || "", year: year(s.created_at), link: s.url });
+        }
+      }
+    }
+    return out;
+  };
+}
+
+async function klipySearch(kind, term) {
+  const q = term || pick(RANDOM_WORDS);
+  const d = await fetchJSON(`https://api.klipy.com/api/v1/${encodeURIComponent(KEYS.klipy)}/${kind}/search?` +
+    qs({ q, per_page: "50", page: String(1 + rint(3)), rating: "pg-13" }));
+  const items = d.data?.data || [];
+  return items.map(it => {
+    const u = findVideoUrl(it.files || it.file || it);
+    return u && { url: https(u), title: it.title || "Untitled", author: "", link: it.slug ? `https://klipy.com/${kind}/${it.slug}` : "" };
+  }).filter(Boolean);
+}
+
+const VIDEO_SOURCES = {
+
+  archive: {
+    label: "Internet Archive (all movies)",
+    async search(term) {
+      const base = (term ? `mediatype:movies AND (subject:"${term}" OR title:"${term}")` : "mediatype:movies") + (this.extra ? " AND " + this.extra : "");
+      const url = (q, rows, page, sort) => {
+        const p = new URLSearchParams({ q, rows, page, output: "json" });
+        p.append("fl[]", "identifier"); p.append("fl[]", "title");
+        if (sort) p.append("sort[]", sort);
+        return "https://archive.org/advancedsearch.php?" + p;
+      };
+      const ck = "ia|" + base;
+      if (!vtotals[ck]) {
+        let q = base + ' AND format:(MPEG4 OR "h.264")';
+        let d = await fetchJSON(url(q, 1, 1));
+        if (!d.response.numFound) { q = base; d = await fetchJSON(url(q, 1, 1)); }
+        vtotals[ck] = { q, n: d.response.numFound };
+      }
+      const { q, n } = vtotals[ck];
+      if (!n) return [];
+      const page = 1 + rint(Math.max(1, Math.min(Math.floor(n / 50), 200)));
+      const sort = pick(["downloads asc", "addeddate asc", "addeddate desc", "identifier asc", "identifier desc"]);
+      const d = await fetchJSON(url(q, 50, page, sort));
+      return (d.response.docs || []).map(x => ({ id: x.identifier, title: x.title }));
+    },
+    async resolve(c) {
+      const meta = await fetchJSON("https://archive.org/metadata/" + encodeURIComponent(c.id));
+      if (!meta || !Array.isArray(meta.files) || meta.is_dark) return null;
+      const mp4 = meta.files.filter(f => /\.mp4$/i.test(f.name));
+      if (!mp4.length) return null;
+      const der = mp4.filter(f => f.source === "derivative");
+      const f = pick(der.length ? der : mp4);
+      const md = meta.metadata || {};
+      return {
+        url: "https://archive.org/download/" + encodeURIComponent(c.id) + "/" + f.name.split("/").map(encodeURIComponent).join("/"),
+        title: asText(md.title) || asText(c.title) || c.id, author: asText(md.creator) || "",
+        year: asText(md.year) || year(asText(md.date)), link: "https://archive.org/details/" + encodeURIComponent(c.id)
+      };
+    }
+  },
+
+  commons: {
+    label: "Wikimedia Commons",
+    async search(term) {
+      const s = "filetype:video" + (term ? " " + term : "");
+      const ck = "wc|" + s;
+      if (vtotals[ck] == null) {
+        const d = await fetchJSON("https://commons.wikimedia.org/w/api.php?" + qs({
+          action: "query", format: "json", origin: "*", list: "search", srsearch: s, srnamespace: "6", srlimit: "1", srinfo: "totalhits"
+        }));
+        vtotals[ck] = d.query?.searchinfo?.totalhits || 0;
+      }
+      const n = vtotals[ck];
+      if (!n) return [];
+      const d = await fetchJSON("https://commons.wikimedia.org/w/api.php?" + qs({
+        action: "query", format: "json", origin: "*", generator: "search", gsrsearch: s, gsrnamespace: "6",
+        gsrlimit: "50", gsroffset: String(rint(Math.max(1, Math.min(n - 50, 9900)))), prop: "videoinfo",
+        viprop: "url|mime|extmetadata|derivatives", viextmetadatafilter: "Artist|LicenseShortName|DateTimeOriginal"
+      }));
+      const out = [];
+      for (const p of Object.values(d.query?.pages || {})) {
+        const vi = p.videoinfo?.[0]; if (!vi) continue;
+        const ders = (vi.derivatives || []).filter(x => x.src && canPlay(x.type) && x.height > 0);
+        let url = null;
+        if (ders.length) url = closestHeight(ders, x => x.height).src;
+        else if (/^video\//.test(vi.mime) && canPlay(vi.mime)) url = vi.url;
+        if (!url) continue;
+        const em = vi.extmetadata || {};
+        out.push({
+          url: https(url), title: p.title.replace(/^File:/, "").replace(/\.[a-z0-9]+$/i, "").replace(/_/g, " "),
+          author: stripHTML(em.Artist?.value).slice(0, 80), year: year(stripHTML(em.DateTimeOriginal?.value)),
+          license: stripHTML(em.LicenseShortName?.value), link: vi.descriptionurl
+        });
+      }
+      return out;
+    }
+  },
+
+  peertube: {
+    label: "PeerTube",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const base = { search: q, nsfw: "false", isLive: "false" };
+      const ck = "pt|" + q;
+      if (vtotals[ck] == null) {
+        const d = await fetchJSON("https://sepiasearch.org/api/v1/search/videos?" + qs({ ...base, start: 0, count: 1 }));
+        vtotals[ck] = d.total || 0;
+      }
+      const n = vtotals[ck];
+      if (!n) return [];
+      const d = await fetchJSON("https://sepiasearch.org/api/v1/search/videos?" + qs({ ...base, start: rint(Math.max(1, Math.min(n - 50, 2000))), count: 50 }));
+      return (d.data || []).filter(v => v.uuid && !v.isLive).map(v => {
+        let host = v.channel?.host || v.account?.host;
+        try { host = host || new URL(v.url).host; } catch {}
+        return { uuid: v.uuid, host, title: v.name, author: v.account?.displayName || v.channel?.displayName || "", link: v.url || `https://${host}/w/${v.uuid}` };
+      }).filter(c => c.host);
+    },
+    async resolve(c) {
+      const d = await fetchJSON(`https://${c.host}/api/v1/videos/${c.uuid}`, {}, 8000);
+      const files = [...(d.files || []), ...(d.streamingPlaylists || []).flatMap(p => p.files || [])]
+        .filter(f => f.fileUrl && f.resolution && f.resolution.id > 0);
+      if (!files.length) return null;
+      const f = closestHeight(files, x => x.resolution.id);
+      return { url: f.fileUrl, title: c.title, author: c.author, year: year(d.originallyPublishedAt || d.publishedAt), link: c.link, license: d.licence?.label || "" };
+    }
+  },
+
+  mastodon: { label: "Mastodon", search: fediVideo(MASTODON_INSTANCES) },
+
+  pixelfed: { label: "Pixelfed", search: fediVideo(PIXELFED_INSTANCES) },
+
+  lemmy: {
+    label: "Lemmy",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const d = await fromServers(LEMMY_INSTANCES, "/api/v3/search?" + qs({
+        q, type_: "Posts", listing_type: "All", sort: pick(["TopAll", "New", "Old", "TopYear"]), page: String(1 + rint(4)), limit: "50"
+      }));
+      return (d.posts || []).filter(p => p.post && !p.post.nsfw && !p.community?.nsfw).map(p => {
+        const u = p.post.url || "";
+        const isVideo = /^video\//.test(p.post.url_content_type || "") || /\.(mp4|webm|m4v)(\?|$)/i.test(u);
+        return isVideo && { url: https(u), title: p.post.name, author: p.creator?.display_name || p.creator?.name || "", year: year(p.post.published), link: p.post.ap_id };
+      }).filter(Boolean);
+    }
+  },
+
+  nasa: {
+    label: "NASA",
+    async search(term) {
+      const q = term || pick(["earth", "launch", "astronaut", "moon", "mars", "sun", "clouds", "ocean", "test", "flight"]);
+      const ck = "nasa|" + q;
+      if (vtotals[ck] == null) {
+        const d = await fetchJSON("https://images-api.nasa.gov/search?" + qs({ q, media_type: "video", page: 1 }));
+        vtotals[ck] = d.collection?.metadata?.total_hits || 0;
+      }
+      const n = vtotals[ck];
+      if (!n) return [];
+      const page = 1 + rint(Math.max(1, Math.min(Math.ceil(n / 100), 99)));
+      const d = await fetchJSON("https://images-api.nasa.gov/search?" + qs({ q, media_type: "video", page }));
+      return (d.collection?.items || []).map(it => ({
+        id: it.data?.[0]?.nasa_id, title: it.data?.[0]?.title, author: it.data?.[0]?.center || "",
+        year: year(it.data?.[0]?.date_created), manifest: it.href
+      })).filter(c => c.id && c.manifest);
+    },
+    async resolve(c) {
+      const files = await fetchJSON(https(c.manifest));
+      const mp4 = (Array.isArray(files) ? files : []).filter(u => /\.mp4$/i.test(u));
+      if (!mp4.length) return null;
+      const u = mp4.find(x => /~mobile\.mp4$/i.test(x)) || mp4.find(x => /~small\.mp4$/i.test(x)) || mp4.find(x => /~medium\.mp4$/i.test(x)) || mp4[0];
+      return { url: https(u), title: c.title, author: c.author, year: c.year, link: "https://images.nasa.gov/details/" + encodeURIComponent(c.id), license: "public domain" };
+    }
+  },
+
+  loc: {
+    label: "Library of Congress",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const ck = "loc|" + q;
+      const url = (sp) => "https://www.loc.gov/film-and-videos/?" + qs({ q, fo: "json", c: "50", sp: String(sp), fa: "online-format:video" });
+      if (vtotals[ck] == null) {
+        const d = await fetchJSON(url(1));
+        vtotals[ck] = d.pagination?.total || 0;
+      }
+      const n = vtotals[ck];
+      if (!n) return [];
+      const d = await fetchJSON(url(1 + rint(Math.max(1, Math.min(Math.ceil(n / 50), 20)))));
+      return (d.results || []).map(r => ({
+        page: r.url || r.id, inline: findVideoUrl(r.resources || []),
+        title: asText(r.title) || "Untitled", author: asText(r.contributor) || "", year: year(r.date), link: r.url || r.id
+      })).filter(c => c.page || c.inline);
+    },
+    async resolve(c) {
+      let u = c.inline;
+      if (!u && c.page) { const d = await fetchJSON(String(c.page).split("?")[0] + "?fo=json"); u = findVideoUrl(d.resources || d); }
+      return u ? { url: https(u), title: c.title, author: c.author, year: c.year, link: c.link } : null;
+    }
+  },
+
+  europeana: {
+    label: "Europeana",
+    needs: "europeana",
+    async search(term) {
+      const query = term || "*";
+      const base = { wskey: KEYS.europeana, query, qf: "TYPE:VIDEO", media: "true", reusability: "open", profile: "standard" };
+      const ck = "eu|" + query;
+      if (vtotals[ck] == null) {
+        const d = await fetchJSON("https://api.europeana.eu/record/v2/search.json?" + qs({ ...base, rows: 1, start: 1 }));
+        vtotals[ck] = d.totalResults || 0;
+      }
+      const n = vtotals[ck];
+      if (!n) return [];
+      const d = await fetchJSON("https://api.europeana.eu/record/v2/search.json?" + qs({ ...base, rows: 100, start: 1 + rint(Math.max(1, Math.min(n - 100, 900))) }));
+      return (d.items || []).map(it => ({
+        url: https(asText(it.edmIsShownBy)), title: asText(it.title) || "Untitled",
+        author: asText(it.dataProvider) || "", year: asText(it.year) || "", link: it.guid
+      })).filter(c => /\.(mp4|m4v|webm)(\?|$)/i.test(c.url));
+    }
+  },
+
+  flickr: {
+    label: "Flickr",
+    needs: "flickr",
+    async search(term) {
+      const text = term || pick(RANDOM_WORDS);
+      const base = { method: "flickr.photos.search", api_key: KEYS.flickr, text, media: "videos", safe_search: "1",
+                     extras: "owner_name,date_taken,media", format: "json", nojsoncallback: "1" };
+      const ck = "fl|" + text;
+      if (vtotals[ck] == null) {
+        const d = await fetchJSON("https://api.flickr.com/services/rest/?" + qs({ ...base, per_page: 1, page: 1 }));
+        vtotals[ck] = +d.photos?.total || 0;
+      }
+      const n = vtotals[ck];
+      if (!n) return [];
+      const d = await fetchJSON("https://api.flickr.com/services/rest/?" + qs({ ...base, per_page: 100, page: 1 + rint(Math.max(1, Math.min(Math.ceil(n / 100), 40))) }));
+      return (d.photos?.photo || []).filter(p => p.media === "video").map(p => ({
+        id: p.id, title: p.title || "Untitled", author: p.ownername || "", year: year(p.datetaken), link: `https://www.flickr.com/photos/${p.owner}/${p.id}`
+      }));
+    },
+    async resolve(c) {
+      const d = await fetchJSON("https://api.flickr.com/services/rest/?" + qs({
+        method: "flickr.photos.getSizes", api_key: KEYS.flickr, photo_id: c.id, format: "json", nojsoncallback: "1"
+      }));
+      const sizes = (d.sizes?.size || []).filter(s => s.media === "video" && s.source && !/player|original/i.test(s.label));
+      if (!sizes.length) return null;
+      return { ...c, url: https(closestHeight(sizes, x => +x.height).source) };
+    }
+  },
+
+  giphy: {
+    label: "Giphy",
+    needs: "giphy",
+    note: "Powered by GIPHY",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const ck = "gi|" + q;
+      const base = { api_key: KEYS.giphy, q, rating: "pg-13" };
+      if (vtotals[ck] == null) {
+        const d = await fetchJSON("https://api.giphy.com/v1/gifs/search?" + qs({ ...base, limit: 1, offset: 0 }));
+        vtotals[ck] = d.pagination?.total_count || 0;
+      }
+      const n = vtotals[ck];
+      if (!n) return [];
+      const d = await fetchJSON("https://api.giphy.com/v1/gifs/search?" + qs({ ...base, limit: 50, offset: rint(Math.max(1, Math.min(n - 50, 4950))) }));
+      return (d.data || []).map(g => ({
+        url: g.images?.original?.mp4 || g.images?.original_mp4?.mp4,
+        title: g.title || "Untitled", author: g.user?.display_name || g.username || "", link: g.url
+      })).filter(c => c.url);
+    }
+  },
+
+  klipyGifs:  { label: "Klipy GIFs",  needs: "klipy", note: "Powered by KLIPY", search: (t) => klipySearch("gifs", t) },
+  klipyClips: { label: "Klipy Clips", needs: "klipy", note: "Powered by KLIPY", search: (t) => klipySearch("clips", t) },
+
+  imgur: {
+    label: "Imgur",
+    needs: "imgur",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const d = await fetchJSON(`https://api.imgur.com/3/gallery/search/${pick(["time", "viral", "top"])}/all/${rint(5)}?` + qs({ q }),
+        { headers: { Authorization: "Client-ID " + KEYS.imgur } });
+      const out = [];
+      for (const it of d.data || []) {
+        if (it.nsfw) continue;
+        for (const im of it.is_album ? (it.images || []) : [it]) {
+          const u = im.mp4 || (/^video\//.test(im.type || "") ? im.link : null);
+          if (u) out.push({ url: https(u), title: it.title || im.title || "Untitled", author: it.account_url || "",
+                            year: it.datetime ? String(new Date(it.datetime * 1000).getFullYear()) : "", link: it.link });
+        }
+      }
+      return out;
+    }
+  },
+
+  pexels: {
+    label: "Pexels",
+    needs: "pexels",
+    async search(term) {
+      const headers = { headers: { Authorization: KEYS.pexels } };
+      const q = term || pick(RANDOM_WORDS);
+      const ck = "px|" + q;
+      if (vtotals[ck] == null) {
+        const d = await fetchJSON("https://api.pexels.com/videos/search?" + qs({ query: q, per_page: 1, page: 1 }), headers);
+        vtotals[ck] = d.total_results || 0;
+      }
+      const n = vtotals[ck];
+      if (!n) return [];
+      const d = await fetchJSON("https://api.pexels.com/videos/search?" + qs({ query: q, per_page: 40, page: 1 + rint(Math.max(1, Math.min(Math.floor(n / 40), 50))) }), headers);
+      return (d.videos || []).map(v => {
+        const files = (v.video_files || []).filter(f => f.link && /mp4/.test(f.file_type || ""));
+        const f = files.length ? closestHeight(files, x => x.height) : null;
+        const slug = (v.url || "").split("/").filter(Boolean).pop() || "";
+        return f && { url: f.link, title: slug.replace(/-\d+$/, "").replace(/-/g, " ") || "Untitled", author: v.user?.name || "", link: v.url };
+      }).filter(Boolean);
+    }
+  },
+
+  pixabay: {
+    label: "Pixabay",
+    needs: "pixabay",
+    async search(term) {
+      const q = term || "";
+      const ck = "pb|" + q;
+      const base = { key: KEYS.pixabay, q, safesearch: "true" };
+      if (vtotals[ck] == null) {
+        const d = await fetchJSON("https://pixabay.com/api/videos/?" + qs({ ...base, per_page: 3, page: 1 }));
+        vtotals[ck] = d.totalHits || 0;
+      }
+      const n = vtotals[ck];
+      if (!n) return [];
+      const d = await fetchJSON("https://pixabay.com/api/videos/?" + qs({ ...base, per_page: 50, page: 1 + rint(Math.max(1, Math.floor(Math.min(n, 500) / 50))) }));
+      return (d.hits || []).map(h => ({
+        url: h.videos?.small?.url || h.videos?.medium?.url || h.videos?.tiny?.url,
+        title: h.tags || "Untitled", author: h.user || "", link: h.pageURL
+      })).filter(c => c.url);
+    }
+  }
+};
+
+
+
+/* ---- More video sources ---- */
+// Internet Archive, one source per collection: same engine, finer control for the visitor
+for (const [key, label, extra] of [
+  ["archiveVlogs",     "Internet Archive: vlogs",              "collection:vlogs"],
+  ["archiveHome",      "Internet Archive: home movies",        'subject:"home movies"'],
+  ["archivePrelinger", "Internet Archive: Prelinger archives", "collection:prelinger"],
+  ["archiveEphemera",  "Internet Archive: ephemeral films",    "collection:ephemera"],
+  ["archiveCommunity", "Internet Archive: community video",    "collection:opensource_movies"],
+  ["archiveSports",    "Internet Archive: sports",             "collection:sports"],
+  ["archiveMusic",     "Internet Archive: arts and music",     "collection:artsandmusicvideos"],
+  ["archiveGaming",    "Internet Archive: videogames",         "collection:gaming"],
+  ["archiveCartoons",  "Internet Archive: cartoons",           "collection:animationandcartoons"],
+  ["archiveYouth",     "Internet Archive: youth media",        "collection:youth_media"]
+]) VIDEO_SOURCES[key] = { ...VIDEO_SOURCES.archive, label, extra };
+
+const PEERTUBE_INSTANCES = ["framatube.org", "peertube.tv", "tilvids.com", "video.blender.org", "diode.zone", "tube.tchncs.de",
+  "makertube.net", "peertube.linuxrocks.online", "video.hardlimit.com", "peertube.social", "tube.kockatoo.org", "videos.upr.fr"];
+
+Object.assign(VIDEO_SOURCES, {
+
+  // PeerTube servers queried one by one (SepiaSearch above searches all of them at once)
+  peertubeInstances: {
+    label: "PeerTube (single servers)",
+    async search(term) {
+      const ok = PEERTUBE_INSTANCES.filter(h => !(badServer[h] > Date.now()));
+      if (!ok.length) throw new Error("all servers refused");
+      let last = null, answered = false;
+      for (const host of some(ok, 4)) {
+        const base = term ? { search: term, nsfw: "false" } : { sort: "-publishedAt", nsfw: "false", isLocal: "true" };
+        const api = `https://${host}/api/v1/` + (term ? "search/videos?" : "videos?");
+        try {
+          const n = await total(`ptl|${host}|${term || "*"}`, async () => (await fetchJSON(api + qs({ ...base, count: "1", start: "0" }), {}, 9000)).total);
+          answered = true;
+          if (!n) continue;
+          const d = await fetchJSON(api + qs({ ...base, count: "50", start: String(rint(Math.max(1, Math.min(n - 50, 5000)))) }), {}, 9000);
+          const list = (d.data || []).filter(v => v.uuid && !v.isLive).map(v => ({
+            uuid: v.uuid, host, title: v.name, author: v.account?.displayName || "", link: v.url || `https://${host}/w/${v.uuid}`
+          }));
+          if (list.length) return list;
+        } catch (e) { badServer[host] = Date.now() + 15 * 60 * 1000; last = e; }
+      }
+      if (!answered && last) throw last;
+      return [];
+    },
+    resolve: VIDEO_SOURCES.peertube.resolve
+  },
+
+  tumblr: {
+    label: "Tumblr",
+    needs: "tumblr",
+    async search(term) {
+      const posts = await tumblrPosts(term);
+      return posts.flatMap(p => tumblrMedia(p).videos.slice(0, 1).map(u => ({
+        url: https(u), title: stripHTML(p.summary || p.caption || "").slice(0, 90) || p.blog_name || "Tumblr",
+        author: p.blog_name || "", year: year(p.date), link: p.post_url
+      })));
+    }
+  }
+});
+
+/* ============================================================
+   IMAGE SOURCES
+   ============================================================ */
+function fediImage(instances) {
+  return async (term) => {
+    const tag = (term || pick(RANDOM_WORDS)).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9_]/g, "");
+    if (!tag) return [];
+    const params = { only_media: "true", limit: "40" };
+    if (Math.random() < 0.6) {
+      const ms = Date.now() - Math.random() * 4 * 365 * 864e5;
+      params.max_id = (BigInt(Math.floor(ms)) << 16n).toString();
+    }
+    const d = await fromServers(instances, `/api/v1/timelines/tag/${encodeURIComponent(tag)}?` + qs(params));
+    const out = [];
+    for (const s of Array.isArray(d) ? d : []) {
+      if (s.sensitive) continue;
+      for (const m of s.media_attachments || []) {
+        if (m.type === "image" && m.url) {
+          out.push({ url: IS_MOBILE && m.preview_url ? m.preview_url : m.url, title: stripHTML(s.content).slice(0, 90) || "#" + tag,
+                     author: s.account?.display_name || s.account?.acct || "", year: year(s.created_at), link: s.url });
+        }
+      }
+    }
+    return out;
+  };
+}
+
+function commonsItems(d) {
+  const out = [];
+  for (const p of Object.values(d.query?.pages || {})) {
+    const ii = p.imageinfo?.[0];
+    if (!ii || !/^image\/(jpeg|png|webp)/.test(ii.mime)) continue;
+    const em = ii.extmetadata || {};
+    out.push({ url: ii.thumburl || ii.url, title: p.title.replace(/^File:/, "").replace(/\.[a-z0-9]+$/i, "").replace(/_/g, " "),
+               author: stripHTML(em.Artist?.value).slice(0, 80), year: year(stripHTML(em.DateTimeOriginal?.value)),
+               license: stripHTML(em.LicenseShortName?.value), link: ii.descriptionurl });
+  }
+  return out;
+}
+
+const IMAGE_SOURCES = {
+
+  commons: {
+    label: "Wikimedia Commons",
+    async search(term) {
+      if (!term) {   // ALL: truly random files from the whole of Commons (100+ million)
+        const d = await fetchJSON("https://commons.wikimedia.org/w/api.php?" + qs({
+          action: "query", format: "json", origin: "*", generator: "random", grnnamespace: "6", grnlimit: "50",
+          prop: "imageinfo", iiprop: "url|mime|extmetadata", iiurlwidth: String(IMG_WIDTH), iiextmetadatafilter: "Artist|LicenseShortName|DateTimeOriginal"
+        }));
+        return commonsItems(d);
+      }
+      const s = "filetype:bitmap" + (term ? " " + term : "");
+      const api = "https://commons.wikimedia.org/w/api.php?";
+      const n = await total("wc|" + s, async () => (await fetchJSON(api + qs({
+        action: "query", format: "json", origin: "*", list: "search", srsearch: s, srnamespace: "6", srlimit: "1", srinfo: "totalhits"
+      }))).query?.searchinfo?.totalhits);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({
+        action: "query", format: "json", origin: "*", generator: "search", gsrsearch: s, gsrnamespace: "6",
+        gsrlimit: "50", gsroffset: String(rint(Math.max(1, Math.min(n - 50, 9900)))), prop: "imageinfo",
+        iiprop: "url|mime|extmetadata", iiurlwidth: String(IMG_WIDTH), iiextmetadatafilter: "Artist|LicenseShortName|DateTimeOriginal"
+      }));
+      return commonsItems(d);
+    }
+  },
+
+  openverse: {
+    label: "Openverse",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const base = { q, page_size: "20", mature: "false" };
+      const pages = await total("ov|" + q, async () => (await fetchJSON("https://api.openverse.org/v1/images/?" + qs({ ...base, page: "1" }))).page_count);
+      if (!pages) return [];
+      const d = await fetchJSON("https://api.openverse.org/v1/images/?" + qs({ ...base, page: String(1 + rint(Math.min(pages, 12))) }));
+      return (d.results || []).filter(r => r.url).map(r => ({
+        url: r.url, title: r.title || "Untitled", author: r.creator || "",
+        license: r.license ? ("CC " + r.license.toUpperCase() + " " + (r.license_version || "")).trim() : "",
+        link: r.foreign_landing_url, via: r.source
+      }));
+    }
+  },
+
+  archive: {
+    label: "Internet Archive",
+    async search(term) {
+      const base = term ? `mediatype:image AND (subject:"${term}" OR title:"${term}")` : "mediatype:image";
+      const url = (rows, page, sort) => {
+        const p = new URLSearchParams({ q: base, rows, page, output: "json" });
+        p.append("fl[]", "identifier"); p.append("fl[]", "title");
+        if (sort) p.append("sort[]", sort);
+        return "https://archive.org/advancedsearch.php?" + p;
+      };
+      const n = await total("ia|" + base, async () => (await fetchJSON(url(1, 1))).response.numFound);
+      if (!n) return [];
+      const d = await fetchJSON(url(50, 1 + rint(Math.max(1, Math.min(Math.floor(n / 50), 200))),
+        pick(["downloads asc", "addeddate asc", "addeddate desc", "identifier asc", "identifier desc"])));
+      return (d.response.docs || []).map(x => ({ id: x.identifier, title: x.title }));
+    },
+    async resolve(c) {
+      const meta = await fetchJSON("https://archive.org/metadata/" + encodeURIComponent(c.id));
+      if (!meta || !Array.isArray(meta.files) || meta.is_dark) return null;
+      const imgs = meta.files.filter(f => /\.(jpe?g|png)$/i.test(f.name) && !/thumb/i.test(f.name) && (+f.size || 0) < 4e6);
+      if (!imgs.length) return null;
+      const f = pick(imgs);
+      const md = meta.metadata || {};
+      return { url: "https://archive.org/download/" + encodeURIComponent(c.id) + "/" + f.name.split("/").map(encodeURIComponent).join("/"),
+               title: asText(md.title) || asText(c.title) || c.id, author: asText(md.creator) || "",
+               year: asText(md.year) || year(asText(md.date)), link: "https://archive.org/details/" + encodeURIComponent(c.id) };
+    }
+  },
+
+  aic: {
+    label: "Art Institute of Chicago",
+    async search(term) {
+      const base = { fields: "id,title,image_id,artist_title,date_display", limit: "100" };
+      if (term) base.q = term;
+      const url = (p) => "https://api.artic.edu/api/v1/artworks/search?" + qs({ ...base, page: String(p) });
+      const n = await total("aic|" + (term || "*"), async () => (await fetchJSON(url(1))).pagination?.total);
+      if (!n) return [];
+      const d = await fetchJSON(url(1 + rint(Math.max(1, Math.min(Math.ceil(n / 100), 10)))));
+      return (d.data || []).filter(a => a.image_id).map(a => ({
+        url: `https://www.artic.edu/iiif/2/${a.image_id}/full/843,/0/default.jpg`,
+        title: a.title || "Untitled", author: a.artist_title || "", year: a.date_display || "", link: `https://www.artic.edu/artworks/${a.id}`
+      }));
+    }
+  },
+
+  met: {
+    label: "The Met",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const d = await fetchJSON("https://collectionapi.metmuseum.org/public/collection/v1/search?" + qs({ hasImages: "true", q }));
+      const ids = (d.objectIDs || []).slice();
+      for (let i = ids.length - 1; i > 0; i--) { const j = rint(i + 1); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+      return ids.slice(0, 60).map(id => ({ id }));
+    },
+    async resolve(c) {
+      const o = await fetchJSON("https://collectionapi.metmuseum.org/public/collection/v1/objects/" + c.id);
+      if (!o.primaryImageSmall) return null;
+      return { url: o.primaryImageSmall, title: o.title || "Untitled", author: o.artistDisplayName || "", year: o.objectDate || "", link: o.objectURL, license: o.isPublicDomain ? "public domain" : "" };
+    }
+  },
+
+  cleveland: {
+    label: "Cleveland Museum of Art",
+    async search(term) {
+      const base = { has_image: "1", fields: "id,title,creators,creation_date,images,url" };
+      if (term) base.q = term;
+      const api = "https://openaccess-api.clevelandart.org/api/artworks/?";
+      const n = await total("cma|" + (term || "*"), async () => (await fetchJSON(api + qs({ ...base, limit: "1" }))).info?.total);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({ ...base, limit: "100", skip: String(rint(Math.max(1, Math.min(n - 100, 5000)))) }));
+      return (d.data || []).filter(a => a.images?.web?.url).map(a => ({
+        url: a.images.web.url, title: a.title || "Untitled", author: a.creators?.[0]?.description || "", year: a.creation_date || "", link: a.url
+      }));
+    }
+  },
+
+  smithsonian: {
+    label: "Smithsonian",
+    needs: "smithsonian",
+    async search(term) {
+      const q = term ? `${term} AND online_media_type:Images` : "online_media_type:Images";
+      const api = "https://api.si.edu/openaccess/api/v1.0/search?";
+      const n = await total("si|" + q, async () => (await fetchJSON(api + qs({ q, rows: "1", api_key: KEYS.smithsonian }))).response?.rowCount);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({ q, rows: "100", start: String(rint(Math.max(1, Math.min(n - 100, 5000)))), api_key: KEYS.smithsonian }));
+      const out = [];
+      for (const r of d.response?.rows || []) {
+        const m = (r.content?.descriptiveNonRepeating?.online_media?.media || []).find(x => x.type === "Images" && x.content);
+        if (!m) continue;
+        const u = /deliveryService/.test(m.content) ? m.content + "&max=" + IMG_WIDTH : m.content;
+        out.push({ url: https(u), title: r.title || "Untitled", author: asText(r.content?.freetext?.name)?.content || "",
+                   year: year(asText(r.content?.freetext?.date)?.content), link: r.content?.descriptiveNonRepeating?.record_link });
+      }
+      return out;
+    }
+  },
+
+  europeana: {
+    label: "Europeana",
+    needs: "europeana",
+    async search(term) {
+      const query = term || "*";
+      const base = { wskey: KEYS.europeana, query, qf: "TYPE:IMAGE", media: "true", reusability: "open", profile: "standard" };
+      const api = "https://api.europeana.eu/record/v2/search.json?";
+      const n = await total("eu|" + query, async () => (await fetchJSON(api + qs({ ...base, rows: 1, start: 1 }))).totalResults);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({ ...base, rows: 100, start: 1 + rint(Math.max(1, Math.min(n - 100, 900))) }));
+      return (d.items || []).filter(it => asText(it.edmPreview)).map(it => ({
+        url: https(asText(it.edmPreview)) + "&size=w400", title: asText(it.title) || "Untitled",
+        author: asText(it.dataProvider) || "", year: asText(it.year) || "", link: it.guid
+      }));
+    }
+  },
+
+  nasa: {
+    label: "NASA",
+    async search(term) {
+      const q = term || pick(["earth", "launch", "astronaut", "moon", "mars", "sun", "clouds", "ocean", "galaxy", "test"]);
+      const n = await total("nasa|" + q, async () => (await fetchJSON("https://images-api.nasa.gov/search?" + qs({ q, media_type: "image", page: 1 }))).collection?.metadata?.total_hits);
+      if (!n) return [];
+      const d = await fetchJSON("https://images-api.nasa.gov/search?" + qs({ q, media_type: "image", page: 1 + rint(Math.max(1, Math.min(Math.ceil(n / 100), 99))) }));
+      return (d.collection?.items || []).filter(it => it.links?.[0]?.href).map(it => ({
+        url: https(it.links[0].href), title: it.data?.[0]?.title || "Untitled", author: it.data?.[0]?.center || "",
+        year: year(it.data?.[0]?.date_created), link: "https://images.nasa.gov/details/" + encodeURIComponent(it.data?.[0]?.nasa_id || ""), license: "public domain"
+      }));
+    }
+  },
+
+  loc: {
+    label: "Library of Congress",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const url = (sp) => "https://www.loc.gov/photos/?" + qs({ q, fo: "json", c: "100", sp: String(sp) });
+      const n = await total("loc|" + q, async () => (await fetchJSON(url(1))).pagination?.total);
+      if (!n) return [];
+      const d = await fetchJSON(url(1 + rint(Math.max(1, Math.min(Math.ceil(n / 100), 20)))));
+      return (d.results || []).map(r => {
+        const list = (r.image_url || []).filter(u => typeof u === "string");
+        const u = list[list.length - 1];
+        return u && { url: https(u.split("#")[0]), title: asText(r.title) || "Untitled", author: asText(r.contributor) || "", year: year(r.date), link: r.url || r.id };
+      }).filter(Boolean);
+    }
+  },
+
+  mastodon: { label: "Mastodon", search: fediImage(MASTODON_INSTANCES) },
+  pixelfed: { label: "Pixelfed", search: fediImage(PIXELFED_INSTANCES) },
+
+  lemmy: {
+    label: "Lemmy",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const d = await fromServers(LEMMY_INSTANCES, "/api/v3/search?" + qs({
+        q, type_: "Posts", listing_type: "All", sort: pick(["TopAll", "New", "Old", "TopYear"]), page: String(1 + rint(4)), limit: "50"
+      }));
+      return (d.posts || []).filter(p => p.post && !p.post.nsfw && !p.community?.nsfw).map(p => {
+        const u = p.post.url || "";
+        const ok = /^image\/(jpeg|png|webp)/.test(p.post.url_content_type || "") || isStillImage(u);
+        return ok && { url: https(u), title: p.post.name, author: p.creator?.display_name || p.creator?.name || "", year: year(p.post.published), link: p.post.ap_id };
+      }).filter(Boolean);
+    }
+  },
+
+  unsplash: {
+    label: "Unsplash",
+    needs: "unsplash",
+    async search(term) {
+      const key = KEYS.unsplash;
+      let list;
+      if (!term) {
+        list = await fetchJSON("https://api.unsplash.com/photos/random?" + qs({ count: "30", client_id: key }));
+      } else {
+        const pages = await total("us|" + term, async () => (await fetchJSON("https://api.unsplash.com/search/photos?" + qs({ query: term, per_page: "30", client_id: key }))).total_pages);
+        if (!pages) return [];
+        list = (await fetchJSON("https://api.unsplash.com/search/photos?" + qs({ query: term, per_page: "30", page: String(1 + rint(Math.min(pages, 30))), client_id: key }))).results;
+      }
+      return (list || []).map(p => ({
+        url: IS_MOBILE ? p.urls?.small : p.urls?.regular, title: p.alt_description || p.description || "Untitled",
+        author: p.user?.name || "", year: year(p.created_at), link: p.links?.html
+      })).filter(c => c.url);
+    }
+  },
+
+  pexels: {
+    label: "Pexels",
+    needs: "pexels",
+    async search(term) {
+      const headers = { headers: { Authorization: KEYS.pexels } };
+      const q = term || pick(RANDOM_WORDS);
+      const n = await total("px|" + q, async () => (await fetchJSON("https://api.pexels.com/v1/search?" + qs({ query: q, per_page: 1 }), headers)).total_results);
+      if (!n) return [];
+      const d = await fetchJSON("https://api.pexels.com/v1/search?" + qs({ query: q, per_page: 80, page: 1 + rint(Math.max(1, Math.min(Math.floor(n / 80), 50))) }), headers);
+      return (d.photos || []).map(p => ({ url: IS_MOBILE ? p.src?.medium : p.src?.large, title: p.alt || "Untitled", author: p.photographer || "", link: p.url })).filter(c => c.url);
+    }
+  },
+
+  pixabay: {
+    label: "Pixabay",
+    needs: "pixabay",
+    async search(term) {
+      const base = { key: KEYS.pixabay, q: term || "", image_type: "photo", safesearch: "true" };
+      const n = await total("pb|" + (term || ""), async () => (await fetchJSON("https://pixabay.com/api/?" + qs({ ...base, per_page: 3 }))).totalHits);
+      if (!n) return [];
+      const d = await fetchJSON("https://pixabay.com/api/?" + qs({ ...base, per_page: 100, page: 1 + rint(Math.max(1, Math.floor(Math.min(n, 500) / 100))) }));
+      return (d.hits || []).map(h => ({ url: h.webformatURL, title: h.tags || "Untitled", author: h.user || "", link: h.pageURL })).filter(c => c.url);
+    }
+  },
+
+  flickr: {
+    label: "Flickr",
+    needs: "flickr",
+    async search(term) {
+      const base = { method: "flickr.photos.search", api_key: KEYS.flickr, text: term || pick(RANDOM_WORDS), media: "photos", safe_search: "1",
+                     extras: "owner_name,date_taken,url_z,url_c", format: "json", nojsoncallback: "1" };
+      const n = await total("fl|" + base.text, async () => +(await fetchJSON("https://api.flickr.com/services/rest/?" + qs({ ...base, per_page: 1 }))).photos?.total);
+      if (!n) return [];
+      const d = await fetchJSON("https://api.flickr.com/services/rest/?" + qs({ ...base, per_page: 250, page: 1 + rint(Math.max(1, Math.min(Math.ceil(n / 250), 16))) }));
+      return (d.photos?.photo || []).map(p => ({
+        url: IS_MOBILE ? p.url_z : (p.url_c || p.url_z), title: p.title || "Untitled", author: p.ownername || "",
+        year: year(p.datetaken), link: `https://www.flickr.com/photos/${p.owner}/${p.id}`
+      })).filter(c => c.url);
+    }
+  },
+
+  giphy: {
+    label: "Giphy (stills)",
+    needs: "giphy",
+    note: "Powered by GIPHY",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const base = { api_key: KEYS.giphy, q, rating: "pg-13" };
+      const n = await total("gi|" + q, async () => (await fetchJSON("https://api.giphy.com/v1/gifs/search?" + qs({ ...base, limit: 1 }))).pagination?.total_count);
+      if (!n) return [];
+      const d = await fetchJSON("https://api.giphy.com/v1/gifs/search?" + qs({ ...base, limit: 50, offset: rint(Math.max(1, Math.min(n - 50, 4950))) }));
+      return (d.data || []).map(g => ({ url: g.images?.original_still?.url, title: g.title || "Untitled", author: g.user?.display_name || g.username || "", link: g.url })).filter(c => c.url);
+    }
+  },
+
+  imgurRandom: {
+    label: "Imgur random (unfiltered)",
+    defaultOff: true,      // unmoderated: switched off until you tick it
+    lossy: true,           // most random addresses are empty, and that's expected
+    async search(term) {
+      if (term) return [];   // random addresses can't be searched by word
+      const chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+      const id = (n) => Array.from({ length: n }, () => chars[rint(chars.length)]).join("");
+      return Array.from({ length: 80 }, () => {
+        const i = id(Math.random() < 0.7 ? 5 : 7);
+        return { url: `https://i.imgur.com/${i}${IS_MOBILE ? "m" : "l"}.jpg`, title: i, link: `https://imgur.com/${i}` };
+      });
+    }
+  },
+
+  windy: {
+    label: "Webcams (Windy, live)",
+    needs: "windy",
+    async search(term) {
+      if (term) return [];
+      const d = await fetchJSON("https://api.windy.com/webcams/api/v3/webcams?" + qs({ limit: "50", offset: String(rint(1000)), include: "images,location" }),
+        { headers: { "x-windy-api-key": KEYS.windy } });
+      return (d.webcams || []).map(w => ({
+        url: w.images?.current?.preview, title: w.title || "Webcam",
+        author: [w.location?.city, w.location?.country].filter(Boolean).join(", "), year: "live",
+        link: `https://www.windy.com/webcams/${w.webcamId}`
+      })).filter(c => c.url);
+    }
+  },
+
+  imgur: {
+    label: "Imgur",
+    needs: "imgur",
+    async search(term) {
+      const d = await fetchJSON(`https://api.imgur.com/3/gallery/search/${pick(["time", "viral", "top"])}/all/${rint(5)}?` + qs({ q: term || pick(RANDOM_WORDS) }),
+        { headers: { Authorization: "Client-ID " + KEYS.imgur } });
+      const out = [];
+      for (const it of d.data || []) {
+        if (it.nsfw) continue;
+        for (const im of it.is_album ? (it.images || []) : [it]) {
+          if (/^image\/(jpeg|png|webp)/.test(im.type || "") && !im.animated && im.link) {
+            out.push({ url: https(im.link), title: it.title || im.title || "Untitled", author: it.account_url || "",
+                       year: it.datetime ? String(new Date(it.datetime * 1000).getFullYear()) : "", link: it.link });
+          }
+        }
+      }
+      return out;
+    }
+  }
+};
+
+
+
+/* ---- More image sources ---- */
+Object.assign(IMAGE_SOURCES, {
+
+  inaturalist: {
+    label: "iNaturalist",
+    async search(term) {
+      const p = { photos: "true", per_page: "200", order_by: "random", quality_grade: "research", photo_license: "cc0,cc-by,cc-by-sa,cc-by-nc,cc-by-nc-sa" };
+      if (term) p.q = term;
+      const d = await fetchJSON("https://api.inaturalist.org/v1/observations?" + qs(p));
+      return (d.results || []).map(o => {
+        const ph = o.photos?.[0];
+        if (!ph?.url) return null;
+        return {
+          url: ph.url.replace(/\/square\./, IS_MOBILE ? "/medium." : "/large."),
+          title: o.taxon?.preferred_common_name || o.taxon?.name || o.species_guess || "Observation",
+          author: o.user?.name || o.user?.login || "", year: year(o.observed_on),
+          license: licenseLabel(ph.license_code), link: o.uri
+        };
+      }).filter(Boolean);
+    }
+  },
+
+  gbif: {
+    label: "GBIF (biodiversity)",
+    lossy: true,
+    async search(term) {
+      const api = "https://api.gbif.org/v1/occurrence/search?";
+      const base = { mediaType: "StillImage", basisOfRecord: "HUMAN_OBSERVATION" };
+      if (term) base.q = term; else base.year = String(1995 + rint(31));
+      const n = await total("gbif|" + (base.q || base.year), async () => (await fetchJSON(api + qs({ ...base, limit: "0" }))).count);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({ ...base, limit: "300", offset: String(rint(Math.max(1, Math.min(n - 300, 99000)))) }));
+      return (d.results || []).flatMap(o => (o.media || [])
+        .filter(m => m.type === "StillImage" && /^https?:\/\//.test(m.identifier || "")).slice(0, 1)
+        .map(m => ({
+          url: https(m.identifier).replace(/\/original\.(jpe?g|png)/i, "/medium.$1"),
+          title: o.scientificName || o.species || "Observation", author: m.rightsHolder || m.creator || o.recordedBy || "",
+          year: year(o.eventDate), license: licenseLabel(m.license || o.license), link: "https://www.gbif.org/occurrence/" + o.key
+        })));
+    }
+  },
+
+  wellcome: {
+    label: "Wellcome Collection",
+    async search(term) {
+      const api = "https://api.wellcomecollection.org/catalogue/v2/images?";
+      const base = term ? { query: term } : {};
+      const n = await total("wel|" + (term || "*"), async () => (await fetchJSON(api + qs({ ...base, pageSize: "1" }))).totalResults);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({ ...base, pageSize: "100", page: String(1 + rint(Math.max(1, Math.min(Math.ceil(n / 100), 90)))) }));
+      return (d.results || []).map(r => {
+        const t = r.thumbnail?.url;
+        if (!t) return null;
+        return {
+          url: t.replace(/\/full\/[^/]+\//, `/full/!${IMG_WIDTH},${IMG_WIDTH}/`), title: r.source?.title || "Untitled",
+          license: r.thumbnail?.license?.label || r.locations?.[0]?.license?.label || "",
+          link: r.source?.id ? `https://wellcomecollection.org/works/${r.source.id}/images?id=${r.id}` : "https://wellcomecollection.org/"
+        };
+      }).filter(Boolean);
+    }
+  },
+
+  vam: {
+    label: "Victoria and Albert Museum",
+    async search(term) {
+      const api = "https://api.vam.ac.uk/v2/objects/search?";
+      const base = { images_exist: "1" };
+      if (term) base.q = term;
+      const n = await total("vam|" + (term || "*"), async () => (await fetchJSON(api + qs({ ...base, page_size: "1" }))).info?.record_count);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({ ...base, page_size: "100", page: String(1 + rint(Math.max(1, Math.min(Math.ceil(n / 100), 90)))) }));
+      return (d.records || []).filter(r => r._primaryImageId).map(r => ({
+        url: `https://framemark.vam.ac.uk/collections/${r._primaryImageId}/full/!${IMG_WIDTH},${IMG_WIDTH}/0/default.jpg`,
+        title: r._primaryTitle || r.objectType || "Untitled", author: r._primaryMaker?.name || "", year: r._primaryDate || "",
+        link: `https://collections.vam.ac.uk/item/${r.systemNumber}/`
+      }));
+    }
+  },
+
+  finna: {
+    label: "Finna (Finnish archives)",
+    async search(term) {
+      const api = "https://api.finna.fi/v1/search?";
+      const p = new URLSearchParams({ lookfor: term || "", type: "AllFields", limit: "100", lng: "en-gb" });
+      for (const f of ['~format_ext_str_mv:"0/Image/"', "online_boolean:1"]) p.append("filter[]", f);
+      for (const f of ["id", "title", "images", "year", "nonPresenterAuthors"]) p.append("field[]", f);
+      const n = await total("fin|" + (term || "*"), async () => { const q = new URLSearchParams(p); q.set("limit", "1"); return (await fetchJSON(api + q)).resultCount; });
+      if (!n) return [];
+      p.set("page", String(1 + rint(Math.max(1, Math.min(Math.ceil(n / 100), 50)))));
+      const d = await fetchJSON(api + p);
+      return (d.records || []).filter(r => r.images?.length).map(r => {
+        let path = String(r.images[0]);
+        path = /[?&]size=/.test(path) ? path.replace(/([?&])size=\w+/, "$1size=large") : path + (path.includes("?") ? "&" : "?") + "size=large";
+        return {
+          url: /^https?:/.test(path) ? path : "https://api.finna.fi" + path, title: r.title || "Untitled",
+          author: r.nonPresenterAuthors?.[0]?.name || "", year: r.year || "", link: "https://www.finna.fi/Record/" + encodeURIComponent(r.id)
+        };
+      });
+    }
+  },
+
+  // Images of random Wikipedia articles, in 20 languages (only the free ones hosted on Commons)
+  wikipediaImages: {
+    label: "Wikipedia (article images)",
+    async search(term) {
+      const lang = term ? pick(["en", "en", "it", "fr", "de", "es"]) : pick(WIKI_LANGS);
+      const api = `https://${lang}.wikipedia.org/w/api.php?`;
+      const base = { action: "query", format: "json", origin: "*", prop: "pageimages", piprop: "thumbnail", pithumbsize: String(IMG_WIDTH), pilimit: "50" };
+      let d;
+      if (!term) d = await fetchJSON(api + qs({ ...base, generator: "random", grnnamespace: "0", grnlimit: "50" }));
+      else {
+        const n = await total(`i-wp|${lang}|${term}`, async () => (await fetchJSON(api + qs({
+          action: "query", format: "json", origin: "*", list: "search", srsearch: term, srlimit: "1", srinfo: "totalhits"
+        }))).query?.searchinfo?.totalhits);
+        if (!n) return [];
+        d = await fetchJSON(api + qs({ ...base, generator: "search", gsrsearch: term, gsrlimit: "50", gsroffset: String(rint(Math.max(1, Math.min(n - 50, 500)))) }));
+      }
+      return Object.values(d.query?.pages || {}).filter(p => /\/wikipedia\/commons\//.test(p.thumbnail?.source || "")).map(p => ({
+        url: p.thumbnail.source, title: p.title, via: lang,
+        link: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(p.title.replace(/ /g, "_"))}`
+      }));
+    }
+  },
+
+  bluesky: {
+    label: "Bluesky",
+    async search(term) {
+      const posts = await bskyPosts(term);
+      return posts.flatMap(p => bskyImages(p).slice(0, 2).map(i => ({
+        url: i.url, title: (i.alt || p.record?.text || "").replace(/\s+/g, " ").slice(0, 90) || "Bluesky",
+        author: p.author?.displayName || p.author?.handle || "", year: year(p.record?.createdAt), link: bskyLink(p)
+      })));
+    }
+  },
+
+  tumblr: {
+    label: "Tumblr",
+    needs: "tumblr",
+    async search(term) {
+      const posts = await tumblrPosts(term);
+      return posts.flatMap(p => tumblrMedia(p).images.slice(0, 2).map(u => ({
+        url: https(u), title: stripHTML(p.summary || p.caption || "").slice(0, 90) || p.blog_name || "Tumblr",
+        author: p.blog_name || "", year: year(p.date), link: p.post_url
+      })));
+    }
+  },
+
+  // About a thousand photographs, all free to use (the collection behind picsum.photos)
+  picsum: {
+    label: "Lorem Picsum",
+    async search(term) {
+      if (term) return [];
+      const d = await fetchJSON("https://picsum.photos/v2/list?" + qs({ page: String(1 + rint(11)), limit: "100" }));
+      return (Array.isArray(d) ? d : []).map(x => ({
+        url: `https://picsum.photos/id/${x.id}/${IMG_WIDTH}/${Math.round(IMG_WIDTH * x.height / x.width)}`,
+        title: "Photo " + x.id, author: x.author || "", license: "Unsplash", link: x.url
+      }));
+    }
+  },
+
+  apod: {
+    label: "NASA Astronomy Picture of the Day",
+    needs: "nasa",
+    async search(term) {
+      if (term) return [];
+      const d = await fetchJSON("https://api.nasa.gov/planetary/apod?" + qs({ api_key: KEYS.nasa, count: "30" }));
+      return (Array.isArray(d) ? d : []).filter(a => a.media_type === "image" && a.url).map(a => ({
+        url: https(a.url), title: a.title, author: (a.copyright || "NASA").replace(/\s+/g, " ").trim(), year: year(a.date),
+        link: "https://apod.nasa.gov/apod/ap" + String(a.date).replace(/-/g, "").slice(2) + ".html"
+      }));
+    }
+  },
+
+  harvard: {
+    label: "Harvard Art Museums",
+    needs: "harvard",
+    async search(term) {
+      const api = "https://api.harvardartmuseums.org/object?";
+      const base = { apikey: KEYS.harvard, hasimage: "1", fields: "title,people,dated,primaryimageurl,url" };
+      if (term) base.q = term;
+      const n = await total("har|" + (term || "*"), async () => (await fetchJSON(api + qs({ ...base, size: "1" }))).info?.totalrecords);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({ ...base, size: "100", page: String(1 + rint(Math.max(1, Math.min(Math.ceil(n / 100), 100)))) }));
+      return (d.records || []).filter(r => r.primaryimageurl).map(r => ({
+        url: r.primaryimageurl + (r.primaryimageurl.includes("?") ? "&" : "?") + "width=" + IMG_WIDTH,
+        title: r.title || "Untitled", author: r.people?.[0]?.name || "", year: r.dated || "", link: r.url
+      }));
+    }
+  },
+
+  dpla: {
+    label: "Digital Public Library of America",
+    needs: "dpla",
+    async search(term) {
+      const api = "https://api.dp.la/v2/items?";
+      const base = { api_key: KEYS.dpla, "sourceResource.type": "image", fields: "object,isShownAt,sourceResource.title,sourceResource.creator,sourceResource.date" };
+      if (term) base.q = term;
+      const n = await total("dpla|" + (term || "*"), async () => (await fetchJSON(api + qs({ ...base, page_size: "1" }))).count);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({ ...base, page_size: "100", page: String(1 + rint(Math.max(1, Math.min(Math.ceil(n / 100), 100)))) }));
+      return (d.docs || []).filter(x => x.object).map(x => {
+        const sr = x.sourceResource || {}, dt = asText(sr.date);
+        return { url: https(asText(x.object)), title: asText(sr.title) || "Untitled", author: asText(sr.creator) || "",
+                 year: year(typeof dt === "object" ? dt?.displayDate : dt), link: asText(x.isShownAt) };
+      });
+    }
+  }
+});
+
+/* ============================================================
+   TEXT SOURCES
+   Each search returns short fragments: { text, title, author, year, link, via, lang }
+   ============================================================ */
+function letterRatio(s) { return ((s.match(/\p{L}/gu) || []).length) / Math.max(1, s.length); }
+// Splits a text into sentences and keeps the readable ones
+function sentences(t, min = 20, max = 260) {
+  const clean = String(t || "").replace(/-\s*\n\s*/g, "").replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
+  return clean.split(/(?<=[.!?…])\s+(?=[\p{Lu}\p{Lo}"“«¿¡(])|(?<=[。！？])/u)
+    .map(s => s.trim()).filter(s => s.length >= min && s.length <= max && letterRatio(s) > 0.6);
+}
+const some = (arr, n) => shuffle(arr.slice()).slice(0, n);
+// A short text is kept whole; a longer one gives a couple of sentences
+function fragments(t, n = 2, min = 15) {
+  const c = String(t || "").replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
+  if (c.length >= min && c.length <= 220 && letterRatio(c) > 0.55) return [c];
+  return some(sentences(c), n);
+}
+function cleanMarkdown(t) {
+  return String(t || "").replace(/```[\s\S]*?```/g, " ").replace(/^>.*$/gm, " ").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[*_~#`]+/g, "").replace(/https?:\/\/\S+/g, "");
+}
+async function fediStatuses(instances, term) {
+  const tag = (term || pick(RANDOM_WORDS)).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9_]/g, "");
+  if (!tag) return [];
+  const params = { limit: "40" };
+  if (Math.random() < 0.6) {
+    const ms = Date.now() - Math.random() * 4 * 365 * 864e5;
+    params.max_id = (BigInt(Math.floor(ms)) << 16n).toString();
+  }
+  const d = await fromServers(instances, `/api/v1/timelines/tag/${encodeURIComponent(tag)}?` + qs(params));
+  return Array.isArray(d) ? d : [];
+}
+
+const TEXT_SOURCES = {
+
+  wikipedia: {
+    label: "Wikipedia",
+    async search(term) {
+      const lang = term ? pick(["en", "en", "it", "fr", "de", "es"]) : pick(WIKI_LANGS);
+      const api = `https://${lang}.wikipedia.org/w/api.php?`;
+      const base = { action: "query", format: "json", origin: "*", prop: "extracts", exintro: "1", explaintext: "1", exlimit: "20" };
+      let d;
+      if (!term) d = await fetchJSON(api + qs({ ...base, generator: "random", grnnamespace: "0", grnlimit: "20" }));
+      else {
+        const n = await total(`t-wp|${lang}|${term}`, async () => (await fetchJSON(api + qs({
+          action: "query", format: "json", origin: "*", list: "search", srsearch: term, srlimit: "1", srinfo: "totalhits"
+        }))).query?.searchinfo?.totalhits);
+        if (!n) return [];
+        d = await fetchJSON(api + qs({ ...base, generator: "search", gsrsearch: term, gsrlimit: "20", gsroffset: String(rint(Math.max(1, Math.min(n - 20, 500)))) }));
+      }
+      const out = [];
+      for (const p of Object.values(d.query?.pages || {})) {
+        for (const s of some(sentences(p.extract), 3)) {
+          out.push({ text: s, title: p.title, link: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(p.title.replace(/ /g, "_"))}`, via: lang, lang });
+        }
+      }
+      return out;
+    }
+  },
+
+  wikiquote: {
+    label: "Wikiquote",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const d = await fetchJSON("https://en.wikiquote.org/w/api.php?" + qs({
+        action: "query", format: "json", origin: "*", list: "search", srsearch: q, srlimit: "50", sroffset: String(rint(100)), srprop: "snippet"
+      }));
+      return (d.query?.search || []).map(r => ({ text: stripHTML(r.snippet), title: r.title, link: "https://en.wikiquote.org/wiki/" + encodeURIComponent(r.title.replace(/ /g, "_")), lang: "en" }))
+        .filter(r => r.text.length >= 20 && letterRatio(r.text) > 0.6);
+    }
+  },
+
+  archive: {
+    label: "Internet Archive (books)",
+    async search(term) {
+      const base = term ? `mediatype:texts AND (subject:"${term}" OR title:"${term}")` : "mediatype:texts";
+      const url = (rows, page, sort) => {
+        const p = new URLSearchParams({ q: base, rows, page, output: "json" });
+        p.append("fl[]", "identifier"); p.append("fl[]", "title");
+        if (sort) p.append("sort[]", sort);
+        return "https://archive.org/advancedsearch.php?" + p;
+      };
+      const n = await total("t-ia|" + base, async () => (await fetchJSON(url(1, 1))).response.numFound);
+      if (!n) return [];
+      const d = await fetchJSON(url(50, 1 + rint(Math.max(1, Math.min(Math.floor(n / 50), 200))),
+        pick(["downloads asc", "addeddate asc", "addeddate desc", "identifier asc", "identifier desc"])));
+      return (d.response.docs || []).map(x => ({ id: x.identifier, title: x.title }));
+    },
+    // Reads a few kilobytes from a random point of the book's text, and picks a sentence
+    async resolve(c) {
+      const meta = await fetchJSON("https://archive.org/metadata/" + encodeURIComponent(c.id));
+      const f = (meta.files || []).find(x => /_djvu\.txt$/i.test(x.name));
+      const size = +(f?.size || 0);
+      if (!f || size < 3000) return null;
+      const start = rint(Math.max(1, size - 6000));
+      const txt = await fetchText("https://archive.org/download/" + encodeURIComponent(c.id) + "/" + encodeURIComponent(f.name),
+        { headers: { Range: `bytes=${start}-${start + 5000}` } });
+      const ss = sentences(txt.slice(300), 30, 240);
+      if (!ss.length) return null;
+      const md = meta.metadata || {};
+      return { text: pick(ss), title: asText(md.title) || asText(c.title) || c.id, author: asText(md.creator) || "",
+               year: year(asText(md.date) || asText(md.year)), link: "https://archive.org/details/" + encodeURIComponent(c.id) };
+    }
+  },
+
+  openlibrary: {
+    label: "Open Library (first sentences)",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const api = "https://openlibrary.org/search.json?";
+      const n = await total("t-ol|" + q, async () => (await fetchJSON(api + qs({ q, fields: "key", limit: "1" }))).numFound);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({ q, fields: "key,title,author_name,first_sentence,first_publish_year", limit: "100",
+                                           page: String(1 + rint(Math.max(1, Math.min(Math.ceil(n / 100), 10)))) }));
+      return (d.docs || []).filter(b => b.first_sentence).flatMap(b => fragments(asText(b.first_sentence), 1).map(t => ({
+        text: t, title: b.title, author: asText(b.author_name) || "", year: String(b.first_publish_year || ""), link: "https://openlibrary.org" + b.key
+      })));
+    }
+  },
+
+  poetry: {
+    label: "PoetryDB",
+    async search(term) {
+      let poems;
+      if (!term) poems = await fetchJSON("https://poetrydb.org/random/8");
+      else {
+        const d = await fetchJSON("https://poetrydb.org/lines/" + encodeURIComponent(term));
+        poems = Array.isArray(d) ? some(d, 12) : [];
+      }
+      const out = [];
+      for (const p of Array.isArray(poems) ? poems : []) {
+        const lines = (p.lines || []).map(l => l.trim()).filter(Boolean);
+        const starts = term ? lines.map((l, i) => l.toLowerCase().includes(term) ? i : -1).filter(i => i >= 0) : lines.map((_, i) => i);
+        for (const i of some(starts, 3)) {
+          const text = lines.slice(i, i + (Math.random() < 0.5 ? 1 : 2)).join(" / ");
+          if (text.length >= 12) out.push({ text, title: p.title, author: p.author, lang: "en" });
+        }
+      }
+      return out;
+    }
+  },
+
+  arxiv: {
+    label: "arXiv",
+    async search(term) {
+      const q = "all:" + (term || pick(RANDOM_WORDS)).replace(/\s+/g, "+");
+      const x = await fetchText("https://export.arxiv.org/api/query?" + qs({ search_query: q, start: String(rint(300)), max_results: "40" }), {}, 15000);
+      const doc = new DOMParser().parseFromString(x, "application/xml");
+      const out = [];
+      for (const e of doc.getElementsByTagName("entry")) {
+        const get = (tag) => e.getElementsByTagName(tag)[0]?.textContent || "";
+        for (const s of some(sentences(get("summary")), 2)) {
+          out.push({ text: s, title: get("title").replace(/\s+/g, " ").trim(), author: e.getElementsByTagName("name")[0]?.textContent || "",
+                     year: year(get("published")), link: get("id"), lang: "en" });
+        }
+      }
+      return out;
+    }
+  },
+
+  gdelt: {
+    label: "World news (GDELT)",
+    async search(term) {
+      let q = term || pick(RANDOM_WORDS);
+      if (q.length < 3) return [];
+      if (/\s/.test(q)) q = `"${q}"`;
+      const d = await fetchJSON("https://api.gdeltproject.org/api/v2/doc/doc?" + qs({ query: q, mode: "artlist", maxrecords: "100", format: "json", sort: pick(["datedesc", "hybridrel"]) }), {}, 15000);
+      return (d.articles || []).filter(a => a.title && a.title.length >= 15).map(a => ({
+        text: a.title, title: a.domain, year: year(a.seendate), link: a.url, via: a.sourcecountry || "", lang: ""
+      }));
+    }
+  },
+
+  guardian: {
+    label: "The Guardian",
+    needs: "guardian",
+    async search(term) {
+      const base = { "api-key": KEYS.guardian, "page-size": "50", "show-fields": "trailText" };
+      if (term) base.q = term;
+      const api = "https://content.guardianapis.com/search?";
+      const pages = await total("t-gu|" + (term || "*"), async () => (await fetchJSON(api + qs({ ...base, "page-size": "1" }))).response?.pages);
+      if (!pages) return [];
+      const d = await fetchJSON(api + qs({ ...base, page: String(1 + rint(Math.max(1, Math.min(Math.floor(pages / 50), 100)))) }));
+      return (d.response?.results || []).flatMap(r => [r.webTitle, stripHTML(r.fields?.trailText)].filter(t => t && t.length >= 15).map(t => ({
+        text: t, title: r.sectionName, year: year(r.webPublicationDate), link: r.webUrl, lang: "en"
+      })));
+    }
+  },
+
+  nyt: {
+    label: "The New York Times",
+    needs: "nyt",
+    async search(term) {
+      const d = await fetchJSON("https://api.nytimes.com/svc/search/v2/articlesearch.json?" + qs({ q: term || pick(RANDOM_WORDS), page: String(rint(10)), "api-key": KEYS.nyt }));
+      return (d.response?.docs || []).flatMap(a => [a.headline?.main, a.abstract].filter(t => t && t.length >= 15).map(t => ({
+        text: t, title: a.section_name || "", year: year(a.pub_date), link: a.web_url, lang: "en"
+      })));
+    }
+  },
+
+  hackernews: {
+    label: "Hacker News",
+    async search(term) {
+      const base = { tags: "comment", hitsPerPage: "100" };
+      let url;
+      if (term) url = "https://hn.algolia.com/api/v1/search?" + qs({ ...base, query: term, page: String(rint(5)) });
+      else url = "https://hn.algolia.com/api/v1/search_by_date?" + qs({ ...base, numericFilters: `created_at_i<${Math.floor(Date.now() / 1000 - Math.random() * 15 * 365 * 86400)}` });
+      const d = await fetchJSON(url);
+      return (d.hits || []).flatMap(h => fragments(stripHTML(h.comment_text), 1).map(t => ({
+        text: t, author: h.author, year: year(h.created_at), link: "https://news.ycombinator.com/item?id=" + h.objectID, lang: "en"
+      })));
+    }
+  },
+
+  stackexchange: {
+    label: "Stack Exchange",
+    async search(term) {
+      const site = pick(["stackoverflow", "superuser", "english", "cooking", "travel", "diy", "gardening", "philosophy", "writing", "music",
+                         "scifi", "movies", "history", "parenting", "pets", "outdoors", "bicycles", "photo", "money", "workplace"]);
+      const d = await fetchJSON("https://api.stackexchange.com/2.3/search/excerpts?" + qs({
+        order: "desc", sort: pick(["relevance", "activity", "creation", "votes"]), q: term || pick(RANDOM_WORDS), site, pagesize: "50", page: String(1 + rint(3))
+      }));
+      const host = site === "stackoverflow" ? "stackoverflow.com" : site === "superuser" ? "superuser.com" : site + ".stackexchange.com";
+      return (d.items || []).flatMap(it => fragments(stripHTML(it.excerpt).replace(/…|\.\.\./g, " "), 1).map(t => ({
+        text: t, title: stripHTML(it.title), year: it.creation_date ? String(new Date(it.creation_date * 1000).getFullYear()) : "",
+        link: `https://${host}/q/${it.question_id}`, via: site, lang: "en"
+      })));
+    }
+  },
+
+  mastodon: {
+    label: "Mastodon",
+    async search(term) {
+      const statuses = await fediStatuses(MASTODON_INSTANCES, term);
+      return statuses.filter(s => !s.sensitive && !s.spoiler_text).flatMap(s => {
+        const t = stripHTML(s.content).replace(/[#@]\S+/g, "").replace(/\s+/g, " ").trim();
+        return fragments(t, 2).map(x => ({ text: x, author: s.account?.display_name || s.account?.acct || "", year: year(s.created_at), link: s.url, lang: s.language || "" }));
+      });
+    }
+  },
+
+  lemmy: {
+    label: "Lemmy",
+    async search(term) {
+      const d = await fromServers(LEMMY_INSTANCES, "/api/v3/search?" + qs({
+        q: term || pick(RANDOM_WORDS), type_: "Comments", listing_type: "All", sort: pick(["TopAll", "New", "Old", "TopYear"]), page: String(1 + rint(4)), limit: "50"
+      }));
+      return (d.comments || []).filter(c => c.comment && !c.comment.removed && !c.comment.deleted && !c.post?.nsfw && !c.community?.nsfw)
+        .flatMap(c => fragments(cleanMarkdown(c.comment.content), 1).map(t => ({
+          text: t, author: c.creator?.display_name || c.creator?.name || "", year: year(c.comment.published), link: c.comment.ap_id, via: c.community?.name || ""
+        })));
+    }
+  },
+
+  tatoeba: {
+    label: "Tatoeba (sentences in many languages)",
+    async search(term) {
+      const params = { query: term || "", sort: "random", orphans: "no", unapproved: "no" };
+      if (!term) { const from = pick(["", "eng", "ita", "fra", "deu", "spa", "por", "jpn", "rus", "tur", "epo", "pol", "nld", "cmn"]); if (from) params.from = from; }
+      const d = await fetchJSON("https://tatoeba.org/en/api_v0/search?" + qs(params));
+      return (d.results || []).filter(r => r.text && r.text.length >= 8).map(r => ({
+        text: r.text, author: r.user?.username || "", link: "https://tatoeba.org/en/sentences/show/" + r.id, via: r.lang || "", lang: ""
+      }));
+    }
+  }
+};
+
+
+/* ---- More text sources ---- */
+// Wikipedia's sister projects share the same engine
+function wikimediaText(project, langs, label) {
+  return {
+    label,
+    async search(term) {
+      const ok = langs.filter(l => !(badServer[`${l}.${project}.org`] > Date.now()));
+      if (!ok.length) throw new Error("all servers refused");
+      const lang = pick(term && ok.includes("en") ? ["en", "en", ...ok] : ok);
+      const host = `${lang}.${project}.org`;
+      const api = `https://${host}/w/api.php?`;
+      const base = { action: "query", format: "json", origin: "*", prop: "extracts", exintro: "1", explaintext: "1", exlimit: "20" };
+      try {
+        let d;
+        if (!term) d = await fetchJSON(api + qs({ ...base, generator: "random", grnnamespace: "0", grnlimit: "20" }));
+        else {
+          const n = await total(`t-${project}|${lang}|${term}`, async () => (await fetchJSON(api + qs({
+            action: "query", format: "json", origin: "*", list: "search", srsearch: term, srlimit: "1", srinfo: "totalhits"
+          }))).query?.searchinfo?.totalhits);
+          if (!n) return [];
+          d = await fetchJSON(api + qs({ ...base, generator: "search", gsrsearch: term, gsrlimit: "20", gsroffset: String(rint(Math.max(1, Math.min(n - 20, 500)))) }));
+        }
+        const out = [];
+        for (const p of Object.values(d.query?.pages || {})) {
+          for (const s of some(sentences(p.extract), 2)) {
+            out.push({ text: s, title: p.title, link: `https://${host}/wiki/${encodeURIComponent(p.title.replace(/ /g, "_"))}`, via: lang, lang });
+          }
+        }
+        return out;
+      } catch (e) { badServer[host] = Date.now() + 15 * 60 * 1000; throw e; }
+    }
+  };
+}
+TEXT_SOURCES.wikisource  = wikimediaText("wikisource",  ["en", "it", "fr", "de", "es", "la", "pt", "ru", "pl"], "Wikisource (literature)");
+TEXT_SOURCES.wikibooks   = wikimediaText("wikibooks",   ["en", "it", "fr", "de", "es", "pt"], "Wikibooks");
+TEXT_SOURCES.wikivoyage  = wikimediaText("wikivoyage",  ["en", "it", "fr", "de", "es", "nl", "ru", "pt"], "Wikivoyage (travel guides)");
+TEXT_SOURCES.wikinews    = wikimediaText("wikinews",    ["en", "it", "fr", "de", "es", "pt", "ru"], "Wikinews");
+TEXT_SOURCES.wikiversity = wikimediaText("wikiversity", ["en", "it", "fr", "de", "es"], "Wikiversity");
+
+Object.assign(TEXT_SOURCES, {
+
+  // What people wrote to describe photographs on Wikimedia Commons
+  commonsText: {
+    label: "Wikimedia Commons (image descriptions)",
+    async search(term) {
+      const api = "https://commons.wikimedia.org/w/api.php?";
+      const meta = { prop: "imageinfo", iiprop: "extmetadata|url", iiextmetadatafilter: "ImageDescription|Artist|DateTimeOriginal|LicenseShortName" };
+      let d;
+      if (!term) d = await fetchJSON(api + qs({ action: "query", format: "json", origin: "*", generator: "random", grnnamespace: "6", grnlimit: "50", ...meta }));
+      else {
+        const s = "filetype:bitmap " + term;
+        const n = await total("t-cd|" + term, async () => (await fetchJSON(api + qs({
+          action: "query", format: "json", origin: "*", list: "search", srsearch: s, srnamespace: "6", srlimit: "1", srinfo: "totalhits"
+        }))).query?.searchinfo?.totalhits);
+        if (!n) return [];
+        d = await fetchJSON(api + qs({ action: "query", format: "json", origin: "*", generator: "search", gsrsearch: s, gsrnamespace: "6", gsrlimit: "50",
+          gsroffset: String(rint(Math.max(1, Math.min(n - 50, 9900)))), ...meta }));
+      }
+      const out = [];
+      for (const p of Object.values(d.query?.pages || {})) {
+        const ii = p.imageinfo?.[0], em = ii?.extmetadata || {};
+        const desc = stripHTML(em.ImageDescription?.value);
+        if (desc.length < 25 || desc.length > 300 || letterRatio(desc) < 0.6) continue;
+        out.push({ text: desc, title: p.title.replace(/^File:/, "").replace(/\.[a-z0-9]+$/i, "").replace(/_/g, " "),
+                   author: stripHTML(em.Artist?.value).slice(0, 80), year: year(stripHTML(em.DateTimeOriginal?.value)),
+                   license: stripHTML(em.LicenseShortName?.value), link: ii.descriptionurl });
+      }
+      return out;
+    }
+  },
+
+  wikidata: {
+    label: "Wikidata (random entities)",
+    async search(term) {
+      const api = "https://www.wikidata.org/w/api.php?";
+      if (term) {
+        const d = await fetchJSON(api + qs({ action: "wbsearchentities", format: "json", origin: "*", search: term, language: "en", uselang: "en", type: "item", limit: "50", continue: String(rint(200)) }));
+        return (d.search || []).filter(e => e.label && e.description && !/^Wikimedia /i.test(e.description))
+          .map(e => ({ text: `${e.label} — ${e.description}`, link: "https://www.wikidata.org/wiki/" + e.id, lang: "en" }));
+      }
+      const ids = Array.from({ length: 50 }, () => "Q" + (1 + rint(120000000)));
+      const d = await fetchJSON(api + qs({ action: "wbgetentities", format: "json", origin: "*", ids: ids.join("|"), props: "labels|descriptions", languages: "en" }));
+      return Object.values(d.entities || {}).filter(e => e.labels?.en && e.descriptions?.en && !/^Wikimedia /i.test(e.descriptions.en.value))
+        .map(e => ({ text: `${e.labels.en.value} — ${e.descriptions.en.value}`, link: "https://www.wikidata.org/wiki/" + e.id, lang: "en" }));
+    }
+  },
+
+  googlebooks: {
+    label: "Google Books (snippets)",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const d = await fetchJSON("https://www.googleapis.com/books/v1/volumes?" + qs({ q, maxResults: "40", startIndex: String(rint(200)), printType: "books" }));
+      return (d.items || []).flatMap(b => {
+        const v = b.volumeInfo || {};
+        const meta = { title: v.title || "", author: asText(v.authors) || "", year: year(v.publishedDate), link: v.infoLink || "", lang: v.language || "" };
+        return [...fragments(stripHTML(b.searchInfo?.textSnippet), 1, 30), ...fragments(stripHTML(v.description), 1, 30)].map(t => ({ ...meta, text: t }));
+      });
+    }
+  },
+
+  // Full-text search inside millions of digitised books
+  openlibraryInside: {
+    label: "Open Library (inside books)",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const d = await fetchJSON("https://openlibrary.org/search/inside.json?" + qs({ q, page: String(1 + rint(20)) }), {}, 15000);
+      return (d.hits?.hits || []).flatMap(h => {
+        const ed = h.edition || {};
+        return (h.highlight?.text || []).map(x => stripHTML(x).replace(/\{\{\{|\}\}\}/g, "").replace(/\s+/g, " ").trim())
+          .filter(x => x.length >= 30 && x.length <= 300 && letterRatio(x) > 0.75)
+          .map(x => ({ text: x, title: ed.title || "", author: asText((ed.authors || []).map(a => a.name)) || "", link: ed.key ? "https://openlibrary.org" + ed.key : "" }));
+      });
+    }
+  },
+
+  crossref: {
+    label: "Crossref (scholarly works)",
+    async search(term) {
+      const p = { rows: "100", select: "title,abstract,author,issued,DOI,container-title" };
+      if (term) { p.query = term; p.offset = String(rint(1000)); } else p.sample = "100";
+      const d = await fetchJSON("https://api.crossref.org/works?" + qs(p), {}, 15000);
+      return (d.message?.items || []).flatMap(it => {
+        const a = it.author?.[0];
+        const meta = { title: asText(it["container-title"]) || "", author: a ? [a.given, a.family].filter(Boolean).join(" ") : "",
+                       year: String(it.issued?.["date-parts"]?.[0]?.[0] || ""), link: it.DOI ? "https://doi.org/" + it.DOI : "" };
+        const out = [];
+        const title = stripHTML(asText(it.title));
+        if (title.length >= 15 && title.length <= 220) out.push({ ...meta, text: title });
+        for (const s of some(sentences(stripHTML(it.abstract).replace(/^Abstract\s*/i, "")), 1)) out.push({ ...meta, text: s });
+        return out;
+      });
+    }
+  },
+
+  openalex: {
+    label: "OpenAlex (random works)",
+    needs: "openalex",
+    async search(term) {
+      const p = { per_page: "100", select: "id,title,publication_year,abstract_inverted_index,authorships,language", api_key: KEYS.openalex };
+      if (term) { p.search = term; p.page = String(1 + rint(50)); } else { p.sample = "100"; p.seed = String(rint(1e6)); }
+      const d = await fetchJSON("https://api.openalex.org/works?" + qs(p), {}, 15000);
+      return (d.results || []).flatMap(it => {
+        const meta = { title: "", author: it.authorships?.[0]?.author?.display_name || "", year: String(it.publication_year || ""), link: it.id, lang: it.language || "" };
+        const out = [];
+        if (it.title && it.title.length >= 15 && it.title.length <= 220) out.push({ ...meta, text: stripHTML(it.title) });
+        for (const s of some(sentences(abstractFrom(it.abstract_inverted_index)), 1)) out.push({ ...meta, text: s });
+        return out;
+      });
+    }
+  },
+
+  doaj: {
+    label: "DOAJ (open-access journals)",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const d = await fetchJSON(`https://doaj.org/api/search/articles/${encodeURIComponent(q)}?` + qs({ pageSize: "100", page: String(1 + rint(15)) }), {}, 15000);
+      return (d.results || []).flatMap(r => {
+        const b = r.bibjson || {};
+        const meta = { title: b.journal?.title || "", author: b.author?.[0]?.name || "", year: String(b.year || ""), link: b.link?.[0]?.url || ("https://doaj.org/article/" + r.id) };
+        const out = [];
+        if (b.title && b.title.length >= 15 && b.title.length <= 220) out.push({ ...meta, text: b.title });
+        for (const s of some(sentences(b.abstract), 1)) out.push({ ...meta, text: s });
+        return out;
+      });
+    }
+  },
+
+  federal: {
+    label: "Federal Register (US)",
+    async search(term) {
+      const api = "https://www.federalregister.gov/api/v1/documents.json?";
+      const p = new URLSearchParams({ per_page: "100", order: "relevance" });
+      for (const f of ["title", "abstract", "publication_date", "html_url", "agencies"]) p.append("fields[]", f);
+      if (term) p.set("conditions[term]", term); else p.set("conditions[publication_date][year]", String(1995 + rint(31)));
+      const pages = await total("fr|" + p.get("conditions[term]") + "|" + p.get("conditions[publication_date][year]"), async () => (await fetchJSON(api + p)).total_pages);
+      if (!pages) return [];
+      p.set("page", String(1 + rint(Math.min(pages, 100))));
+      const d = await fetchJSON(api + p);
+      return (d.results || []).flatMap(r => {
+        const meta = { title: r.agencies?.[0]?.name || "", year: year(r.publication_date), link: r.html_url };
+        return [...fragments(r.title, 1, 15), ...some(sentences(r.abstract), 1)].map(t => ({ ...meta, text: t }));
+      });
+    }
+  },
+
+  meals: {
+    label: "Recipes (TheMealDB)",
+    async search(term) {
+      const d = await fetchJSON("https://www.themealdb.com/api/json/v1/1/search.php?" + qs(term ? { s: term } : { f: "abcdefghijklmnopqrstuvwy"[rint(24)] }));
+      return (d.meals || []).flatMap(m => some(sentences(m.strInstructions, 20, 240), 2).map(t => ({
+        text: t, title: m.strMeal, author: m.strArea || "", link: m.strSource || ("https://www.themealdb.com/meal/" + m.idMeal), lang: "en"
+      })));
+    }
+  },
+
+  cocktails: {
+    label: "Cocktails (TheCocktailDB)",
+    async search(term) {
+      const d = await fetchJSON("https://www.thecocktaildb.com/api/json/v1/1/search.php?" + qs(term ? { s: term } : { f: "abcdefghijklmnopqrstuvwyz"[rint(25)] }));
+      return (d.drinks || []).flatMap(m => {
+        const versions = [["en", m.strInstructions], ["it", m.strInstructionsIT], ["de", m.strInstructionsDE], ["fr", m.strInstructionsFR], ["es", m.strInstructionsES]].filter(x => x[1]);
+        if (!versions.length) return [];
+        const [lang, txt] = pick(versions);
+        return some(sentences(txt, 15, 240), 2).map(t => ({ text: t, title: m.strDrink, author: m.strCategory || "", link: "https://www.thecocktaildb.com/drink/" + m.idDrink, lang }));
+      });
+    }
+  },
+
+  // What people wrote when uploading things to the Internet Archive
+  archiveDescriptions: {
+    label: "Internet Archive (descriptions)",
+    async search(term) {
+      const mt = pick(["movies", "audio", "image", "texts"]);
+      const base = term ? `mediatype:${mt} AND (subject:"${term}" OR title:"${term}")` : `mediatype:${mt}`;
+      const url = (rows, page, sort) => {
+        const p = new URLSearchParams({ q: base, rows, page, output: "json" });
+        for (const f of ["identifier", "title", "description", "creator", "year"]) p.append("fl[]", f);
+        if (sort) p.append("sort[]", sort);
+        return "https://archive.org/advancedsearch.php?" + p;
+      };
+      const n = await total("t-iad|" + base, async () => (await fetchJSON(url(1, 1))).response.numFound);
+      if (!n) return [];
+      const d = await fetchJSON(url(50, 1 + rint(Math.max(1, Math.min(Math.floor(n / 50), 200))), pick(["downloads asc", "addeddate asc", "addeddate desc", "identifier asc", "identifier desc"])));
+      return (d.response.docs || []).flatMap(x => {
+        const meta = { title: asText(x.title) || x.identifier, author: asText(x.creator) || "", year: String(asText(x.year) || ""), link: "https://archive.org/details/" + encodeURIComponent(x.identifier) };
+        return fragments(stripHTML(asText(x.description)), 1, 25).map(t => ({ ...meta, text: t }));
+      });
+    }
+  },
+
+  locText: {
+    label: "Library of Congress (descriptions)",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const url = (sp) => "https://www.loc.gov/search/?" + qs({ q, fo: "json", c: "100", sp: String(sp) });
+      const n = await total("t-loc|" + q, async () => (await fetchJSON(url(1))).pagination?.total);
+      if (!n) return [];
+      const d = await fetchJSON(url(1 + rint(Math.max(1, Math.min(Math.ceil(n / 100), 20)))));
+      return (d.results || []).flatMap(r => {
+        const meta = { title: asText(r.title) || "", year: year(r.date), link: r.url || r.id };
+        return fragments(stripHTML(asText(r.description)), 1, 25).map(t => ({ ...meta, text: t }));
+      });
+    }
+  },
+
+  europeanaText: {
+    label: "Europeana (descriptions)",
+    needs: "europeana",
+    async search(term) {
+      const base = { wskey: KEYS.europeana, query: term || "*", profile: "rich" };
+      const api = "https://api.europeana.eu/record/v2/search.json?";
+      const n = await total("t-eu|" + (term || "*"), async () => (await fetchJSON(api + qs({ ...base, rows: 1, start: 1 }))).totalResults);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({ ...base, rows: 100, start: 1 + rint(Math.max(1, Math.min(n - 100, 900))) }));
+      return (d.items || []).flatMap(it => {
+        const meta = { title: asText(it.title) || "", author: asText(it.dataProvider) || "", year: asText(it.year) || "", link: it.guid };
+        return fragments(stripHTML(asText(it.dcDescription)), 1, 25).map(t => ({ ...meta, text: t }));
+      });
+    }
+  },
+
+  clevelandText: {
+    label: "Cleveland Museum of Art (descriptions)",
+    async search(term) {
+      const api = "https://openaccess-api.clevelandart.org/api/artworks/?";
+      const base = { fields: "title,description,fun_fact,creators,creation_date,url" };
+      if (term) base.q = term;
+      const n = await total("t-cma|" + (term || "*"), async () => (await fetchJSON(api + qs({ ...base, limit: "1" }))).info?.total);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({ ...base, limit: "100", skip: String(rint(Math.max(1, Math.min(n - 100, 5000)))) }));
+      return (d.data || []).flatMap(a => {
+        const meta = { title: a.title || "", author: a.creators?.[0]?.description || "", year: a.creation_date || "", link: a.url };
+        return [...fragments(stripHTML(a.fun_fact), 1, 25), ...fragments(stripHTML(a.description), 1, 25)].map(t => ({ ...meta, text: t }));
+      });
+    }
+  },
+
+  smithsonianText: {
+    label: "Smithsonian (object notes)",
+    needs: "smithsonian",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const api = "https://api.si.edu/openaccess/api/v1.0/search?";
+      const n = await total("t-si|" + q, async () => (await fetchJSON(api + qs({ q, rows: "1", api_key: KEYS.smithsonian }))).response?.rowCount);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({ q, rows: "100", start: String(rint(Math.max(1, Math.min(n - 100, 3000)))), api_key: KEYS.smithsonian }));
+      return (d.response?.rows || []).flatMap(r => {
+        const meta = { title: r.title || "", year: year(asText(r.content?.freetext?.date)?.content), link: r.content?.descriptiveNonRepeating?.record_link };
+        return (r.content?.freetext?.notes || []).slice(0, 2).flatMap(n => fragments(stripHTML(n.content), 1, 25)).map(t => ({ ...meta, text: t }));
+      });
+    }
+  },
+
+  wellcomeText: {
+    label: "Wellcome Collection (works)",
+    async search(term) {
+      const api = "https://api.wellcomecollection.org/catalogue/v2/works?";
+      const base = term ? { query: term } : {};
+      const n = await total("t-wel|" + (term || "*"), async () => (await fetchJSON(api + qs({ ...base, pageSize: "1" }))).totalResults);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({ ...base, pageSize: "100", page: String(1 + rint(Math.max(1, Math.min(Math.ceil(n / 100), 90)))) }));
+      return (d.results || []).flatMap(w => {
+        const meta = { title: w.workType?.label || "", author: w.contributors?.[0]?.agent?.label || "", year: year(w.production?.[0]?.dates?.[0]?.label), link: "https://wellcomecollection.org/works/" + w.id };
+        const out = [];
+        if (w.title && w.title.length >= 15 && w.title.length <= 220) out.push({ ...meta, text: w.title });
+        for (const s of fragments(stripHTML(w.description), 1, 25)) out.push({ ...meta, text: s });
+        return out;
+      });
+    }
+  },
+
+  // Notes left on the map by people who found something wrong: "the bench is gone"
+  osmNotes: {
+    label: "OpenStreetMap notes",
+    async search(term) {
+      const days = term ? 365 : 3;
+      const start = Date.UTC(2013, 0, 1) + Math.random() * (Date.now() - Date.UTC(2013, 0, 1) - days * 864e5);
+      const p = { limit: "100", closed: "-1", from: new Date(start).toISOString().slice(0, 10), to: new Date(start + days * 864e5).toISOString().slice(0, 10) };
+      if (term) p.q = term;
+      const d = await fetchJSON("https://api.openstreetmap.org/api/0.6/notes/search.json?" + qs(p), {}, 15000);
+      return (d.features || []).flatMap(f => {
+        const t = String(f.properties?.comments?.[0]?.text || "").replace(/\s+/g, " ").trim();
+        if (t.length < 20 || t.length > 260 || letterRatio(t) < 0.6) return [];
+        return [{ text: t, title: "Map note " + f.properties.id, year: year(f.properties.date_created), link: "https://www.openstreetmap.org/note/" + f.properties.id }];
+      });
+    }
+  },
+
+  githubCommits: {
+    label: "GitHub commit messages",
+    async search(term) {
+      const d = await fetchJSON("https://api.github.com/search/commits?" + qs({ q: term || pick(RANDOM_WORDS), per_page: "100", page: String(1 + rint(5)), sort: "author-date", order: pick(["asc", "desc"]) }));
+      return (d.items || []).flatMap(it => {
+        const msg = String(it.commit?.message || "").split("\n")[0].trim();
+        if (msg.length < 12 || msg.length > 200 || letterRatio(msg) < 0.6) return [];
+        return [{ text: msg, title: it.repository?.full_name || "", author: it.commit?.author?.name || "", year: year(it.commit?.author?.date), link: it.html_url }];
+      });
+    }
+  },
+
+  bluesky: {
+    label: "Bluesky",
+    async search(term) {
+      const posts = await bskyPosts(term);
+      return posts.flatMap(p => fragments(String(p.record?.text || "").replace(/[#@]\S+/g, "").replace(/\s+/g, " ").trim(), 2, 15).map(t => ({
+        text: t, author: p.author?.displayName || p.author?.handle || "", year: year(p.record?.createdAt), link: bskyLink(p), lang: (p.record?.langs || [])[0] || ""
+      })));
+    }
+  },
+
+  tumblr: {
+    label: "Tumblr",
+    needs: "tumblr",
+    async search(term) {
+      const posts = await tumblrPosts(term);
+      return posts.flatMap(p => {
+        const cands = [p.title, stripHTML(p.body), p.type === "quote" ? stripHTML(p.text) : "", stripHTML(p.caption), stripHTML(p.question), stripHTML(p.answer)].filter(Boolean);
+        return cands.flatMap(c => fragments(c, 1, 20)).slice(0, 2).map(t => ({ text: t, title: "", author: p.blog_name || "", year: year(p.date), link: p.post_url }));
+      });
+    }
+  }
+});
+
+/* ============================================================
+   AUDIO SOURCES
+   ============================================================ */
+// Picks a plausible audio file URL out of any JSON object (used where the
+// exact field name isn't certain, e.g. an API that may rename it between versions).
+function findAudioUrl(obj) {
+  const found = [];
+  const walk = (o, depth) => {
+    if (!o || depth > 8 || found.length > 10) return;
+    if (typeof o === "string") { if (/^https?:\/\/\S+\.(mp3|ogg|oga|wav|m4a|flac)(\?\S*)?$/i.test(o)) found.push(o); return; }
+    if (typeof o === "object") for (const v of Object.values(o)) walk(v, depth + 1);
+  };
+  walk(obj, 0);
+  return found[0] || null;
+}
+function fediAudio(instances) {
+  return async (term) => {
+    const tag = (term || pick(RANDOM_WORDS)).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9_]/g, "");
+    if (!tag) return [];
+    const params = { only_media: "true", limit: "40" };
+    if (Math.random() < 0.6) {
+      const ms = Date.now() - Math.random() * 4 * 365 * 864e5;
+      params.max_id = (BigInt(Math.floor(ms)) << 16n).toString();
+    }
+    const d = await fromServers(instances, `/api/v1/timelines/tag/${encodeURIComponent(tag)}?` + qs(params));
+    const out = [];
+    for (const s of Array.isArray(d) ? d : []) {
+      if (s.sensitive) continue;
+      for (const m of s.media_attachments || []) {
+        if (m.type === "audio" && m.url) out.push({ url: m.url, title: stripHTML(s.content).slice(0, 90) || "#" + tag, author: s.account?.display_name || s.account?.acct || "", year: year(s.created_at), link: s.url });
+      }
+    }
+    return out;
+  };
+}
+
+const AUDIO_SOURCES = {
+
+  archive: {
+    label: "Internet Archive (all audio)",
+    async search(term) {
+      const base = (term ? `mediatype:audio AND (subject:"${term}" OR title:"${term}")` : "mediatype:audio") + (this.extra ? " AND " + this.extra : "");
+      const url = (rows, page, sort) => {
+        const p = new URLSearchParams({ q: base, rows, page, output: "json" });
+        p.append("fl[]", "identifier"); p.append("fl[]", "title");
+        if (sort) p.append("sort[]", sort);
+        return "https://archive.org/advancedsearch.php?" + p;
+      };
+      const n = await total("a-ia|" + base, async () => (await fetchJSON(url(1, 1))).response.numFound);
+      if (!n) return [];
+      const d = await fetchJSON(url(50, 1 + rint(Math.max(1, Math.min(Math.floor(n / 50), 200))), pick(["downloads asc", "addeddate asc", "addeddate desc", "identifier asc", "identifier desc"])));
+      return (d.response.docs || []).map(x => ({ id: x.identifier, title: x.title }));
+    },
+    async resolve(c) {
+      const meta = await fetchJSON("https://archive.org/metadata/" + encodeURIComponent(c.id));
+      if (!meta || !Array.isArray(meta.files) || meta.is_dark) return null;
+      const files = meta.files.filter(f => /\.(mp3|ogg)$/i.test(f.name));
+      if (!files.length) return null;
+      const f = pick(files);
+      const md = meta.metadata || {};
+      return {
+        url: "https://archive.org/download/" + encodeURIComponent(c.id) + "/" + f.name.split("/").map(encodeURIComponent).join("/"),
+        title: asText(md.title) || asText(c.title) || c.id, author: asText(md.creator) || "",
+        year: asText(md.year) || year(asText(md.date)), link: "https://archive.org/details/" + encodeURIComponent(c.id)
+      };
+    }
+  },
+
+  commons: {
+    label: "Wikimedia Commons",
+    async search(term) {
+      const s = "filetype:audio" + (term ? " " + term : "");
+      const api = "https://commons.wikimedia.org/w/api.php?";
+      const n = await total("a-wc|" + s, async () => (await fetchJSON(api + qs({
+        action: "query", format: "json", origin: "*", list: "search", srsearch: s, srnamespace: "6", srlimit: "1", srinfo: "totalhits"
+      }))).query?.searchinfo?.totalhits);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({
+        action: "query", format: "json", origin: "*", generator: "search", gsrsearch: s, gsrnamespace: "6",
+        gsrlimit: "50", gsroffset: String(rint(Math.max(1, Math.min(n - 50, 9900)))), prop: "imageinfo",
+        iiprop: "url|mime|extmetadata", iiextmetadatafilter: "Artist|LicenseShortName|DateTimeOriginal"
+      }));
+      const out = [];
+      for (const p of Object.values(d.query?.pages || {})) {
+        const ii = p.imageinfo?.[0];
+        if (!ii || !/^audio\//.test(ii.mime) || !canPlayAudio(ii.mime)) continue;
+        const em = ii.extmetadata || {};
+        out.push({ url: https(ii.url), title: p.title.replace(/^File:/, "").replace(/\.[a-z0-9]+$/i, "").replace(/_/g, " "),
+                   author: stripHTML(em.Artist?.value).slice(0, 80), year: year(stripHTML(em.DateTimeOriginal?.value)),
+                   license: stripHTML(em.LicenseShortName?.value), link: ii.descriptionurl });
+      }
+      return out;
+    }
+  },
+
+  openverse: {
+    label: "Openverse",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const base = { q, page_size: "20", mature: "false" };
+      const pages = await total("a-ov|" + q, async () => (await fetchJSON("https://api.openverse.org/v1/audio/?" + qs({ ...base, page: "1" }))).page_count);
+      if (!pages) return [];
+      const d = await fetchJSON("https://api.openverse.org/v1/audio/?" + qs({ ...base, page: String(1 + rint(Math.min(pages, 12))) }));
+      return (d.results || []).filter(r => r.url).map(r => ({
+        url: r.url, title: r.title || "Untitled", author: r.creator || "",
+        license: r.license ? ("CC " + r.license.toUpperCase() + " " + (r.license_version || "")).trim() : "",
+        link: r.foreign_landing_url, via: r.source
+      }));
+    }
+  },
+
+  nasa: {
+    label: "NASA",
+    async search(term) {
+      const q = term || pick(["apollo", "launch", "mission control", "countdown", "earth", "space", "report", "voice"]);
+      const n = await total("a-nasa|" + q, async () => (await fetchJSON("https://images-api.nasa.gov/search?" + qs({ q, media_type: "audio", page: 1 }))).collection?.metadata?.total_hits);
+      if (!n) return [];
+      const d = await fetchJSON("https://images-api.nasa.gov/search?" + qs({ q, media_type: "audio", page: 1 + rint(Math.max(1, Math.min(Math.ceil(n / 100), 99))) }));
+      return (d.collection?.items || []).map(it => ({
+        id: it.data?.[0]?.nasa_id, title: it.data?.[0]?.title, author: it.data?.[0]?.center || "",
+        year: year(it.data?.[0]?.date_created), manifest: it.href
+      })).filter(c => c.id && c.manifest);
+    },
+    async resolve(c) {
+      const files = await fetchJSON(https(c.manifest));
+      const u = (Array.isArray(files) ? files : []).find(x => /\.(mp3|wav)$/i.test(x));
+      return u ? { url: https(u), title: c.title, author: c.author, year: c.year, link: "https://images.nasa.gov/details/" + encodeURIComponent(c.id), license: "public domain" } : null;
+    }
+  },
+
+  europeana: {
+    label: "Europeana",
+    needs: "europeana",
+    async search(term) {
+      const query = term || "*";
+      const base = { wskey: KEYS.europeana, query, qf: "TYPE:SOUND", media: "true", reusability: "open", profile: "standard" };
+      const api = "https://api.europeana.eu/record/v2/search.json?";
+      const n = await total("a-eu|" + query, async () => (await fetchJSON(api + qs({ ...base, rows: 1, start: 1 }))).totalResults);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({ ...base, rows: 100, start: 1 + rint(Math.max(1, Math.min(n - 100, 900))) }));
+      return (d.items || []).map(it => ({
+        url: https(asText(it.edmIsShownBy)), title: asText(it.title) || "Untitled",
+        author: asText(it.dataProvider) || "", year: asText(it.year) || "", link: it.guid
+      })).filter(c => /\.(mp3|ogg|wav|m4a)(\?|$)/i.test(c.url));
+    }
+  },
+
+  mastodon: { label: "Mastodon", search: fediAudio(MASTODON_INSTANCES) },
+
+  tumblr: {
+    label: "Tumblr",
+    needs: "tumblr",
+    async search(term) {
+      const posts = await tumblrPosts(term);
+      return posts.filter(p => p.type === "audio" && (p.audio_url || p.audio_source_url)).map(p => ({
+        url: https(p.audio_url || p.audio_source_url), title: p.track_name || stripHTML(p.caption || "").slice(0, 90) || p.blog_name || "Tumblr",
+        author: p.artist || p.blog_name || "", year: year(p.date), link: p.post_url
+      }));
+    }
+  },
+
+  freesound: {
+    label: "Freesound",
+    needs: "freesound",
+    async search(term) {
+      const q = term || pick(RANDOM_WORDS);
+      const api = "https://freesound.org/apiv2/search/text/?";
+      const base = { query: q, token: KEYS.freesound, fields: "id,name,username,previews,license,created", filter: "duration:[1 TO 60]" };
+      const n = await total("a-fs|" + q, async () => (await fetchJSON(api + qs({ ...base, page_size: "1" }))).count);
+      if (!n) return [];
+      const d = await fetchJSON(api + qs({ ...base, page_size: "50", page: String(1 + rint(Math.max(1, Math.min(Math.ceil(n / 50), 40)))) }));
+      return (d.results || []).map(s => ({
+        url: s.previews?.["preview-hq-mp3"] || s.previews?.["preview-lq-mp3"], title: s.name || "Untitled",
+        author: s.username || "", year: year(s.created), license: licenseLabel(s.license), link: "https://freesound.org/s/" + s.id + "/"
+      })).filter(c => c.url);
+    }
+  },
+
+  jamendo: {
+    label: "Jamendo",
+    needs: "jamendo",
+    async search(term) {
+      const base = { client_id: KEYS.jamendo, format: "json", limit: "50", audioformat: "mp32", include: "musicinfo" };
+      if (term) base.search = term; else base.offset = String(rint(5000));
+      const d = await fetchJSON("https://api.jamendo.com/v3.0/tracks/?" + qs(base));
+      return (d.results || []).filter(t => t.audio).map(t => ({
+        url: https(t.audio), title: t.name || "Untitled", author: t.artist_name || "", year: year(t.releasedate),
+        license: licenseLabel(t.license_ccurl), link: t.shareurl || t.shorturl
+      }));
+    }
+  },
+
+  xenocanto: {
+    label: "Xeno-canto (bird sounds)",
+    needs: "xenocanto",
+    async search(term) {
+      const q = term || pick(["song", "call", "flight call", "dawn chorus", "duet"]);
+      const d = await fetchJSON("https://xeno-canto.org/api/3/recordings?" + qs({ query: q, page: String(1 + rint(20)), key: KEYS.xenocanto }), {}, 15000);
+      return (d.recordings || []).map(r => {
+        const u = findAudioUrl(r);
+        return u && { url: https(u), title: [r.en, r.gen, r.sp].filter(Boolean).join(" ") || "Recording", author: r.rec || "", year: year(r.date), license: "CC BY-NC-SA", link: r.url ? https(r.url) : "" };
+      }).filter(Boolean);
+    }
+  }
+};
+
+/* ============================================================
+   SHARED CAPTION
+   ============================================================ */
+const stage = $("#stage"), caption = $("#caption");
+function setCaption(meta) {
+  caption.innerHTML = "";
+  const t = document.createElement("div");
+  const a = document.createElement("a");
+  a.className = "t"; a.textContent = meta.title || (ui.mode === "text" ? meta.source : "Untitled");
+  if (meta.link) { a.href = meta.link; a.target = "_blank"; a.rel = "noopener"; }
+  t.appendChild(a); caption.appendChild(t);
+  const m = document.createElement("div"); m.className = "m";
+  const info = [meta.author, meta.year, meta.license].filter(Boolean).join(", ");
+  m.textContent = (info ? info + " — " : "") + meta.source;
+  caption.appendChild(m);
+}
+function setMessage(text) { caption.innerHTML = ""; const m = document.createElement("div"); m.className = "m"; m.textContent = text; caption.appendChild(m); }
+
+/* ============================================================
+   VIDEO ENGINE
+   Several hidden players preload clips in parallel, each one
+   positioned and buffered for the whole fragment; a frame-accurate
+   clock switches exactly when the chosen seconds run out.
+   ============================================================ */
+const VideoEngine = (() => {
+  const set = makeSourceSet(VIDEO_SOURCES);
+  const MAX_SECONDS = 10;
+  const SLOT_COUNT = SAVE_DATA ? 3 : IS_MOBILE ? 4 : 6;
+  let slots = null, readyQ = [], active = null, gen = 0, running = false;
+  let deadline = Infinity, pausedLeft = 0, waitingForNext = false;
+
+  const speed = () => ui.speed.video;
+  const neededSeconds = () => (speed() === "var" ? MAX_SECONDS : speed()) + 0.4;
+
+  function ensureSlots() {
+    if (slots) return;
+    slots = Array.from({ length: SLOT_COUNT }, () => {
+      const v = document.createElement("video");
+      v.muted = true; v.loop = true; v.preload = "auto"; v.playsInline = true;
+      v.setAttribute("playsinline", ""); v.setAttribute("muted", "");
+      stage.insertBefore(v, stage.firstChild);
+      return { v, st: "idle", clip: null };
+    });
+  }
+  function releaseVideo(v) { v.onloadedmetadata = v.onseeked = v.onerror = null; v.pause(); v.removeAttribute("src"); v.load(); }
+
+  function loadInto(v, clip, need) {
+    return new Promise(resolve => {
+      let done = false, poll = null, start = 0, dur = 0, seeked = false;
+      const finish = (ok) => {
+        if (done) return; done = true;
+        clearTimeout(hard); clearInterval(poll);
+        v.onloadedmetadata = v.onseeked = v.onerror = null;
+        resolve(ok);
+      };
+      const hard = setTimeout(() => finish(seeked && v.readyState >= 3), 12000);
+      const buffered = () => {
+        const target = Math.min(dur, start + need) - 0.05;
+        for (let i = 0; i < v.buffered.length; i++) if (v.buffered.start(i) <= start + 0.1 && v.buffered.end(i) >= target) return true;
+        return false;
+      };
+      v.onerror = () => finish(false);
+      v.onloadedmetadata = () => {
+        dur = v.duration;
+        if (!isFinite(dur) || dur < 0.3) return finish(false);
+        start = Math.random() * Math.max(0, dur - need - 0.2);
+        v.currentTime = start;
+      };
+      v.onseeked = () => {
+        if (seeked) return;
+        seeked = true;
+        poll = setInterval(() => { if (buffered() || (v.readyState >= 4 && dur - start < need)) finish(true); }, 120);
+      };
+      v.src = clip.url; v.load();
+    });
+  }
+
+  async function prepareSlot(slot) {
+    if (!running || slot.st !== "idle") return;
+    slot.st = "loading";
+    const g = gen;
+    while (running && g === gen) {
+      const clip = await set.getItem();
+      if (!running || g !== gen) break;
+      if (!clip) { await sleep(2500); continue; }
+      const ok = await loadInto(slot.v, clip, neededSeconds());
+      if (!running || g !== gen) break;
+      if (ok) {
+        set.SOURCES[clip.key].fails = 0;
+        slot.clip = clip; slot.st = "ready"; readyQ.push(slot);
+        if (waitingForNext && !ui.paused) cut();
+        return;
+      }
+      set.noteFail(clip.key);
+    }
+    releaseVideo(slot.v); slot.st = "idle"; slot.clip = null;
+    if (running) prepareSlot(slot);
+  }
+
+  function cut() {
+    const next = readyQ.shift();
+    if (!next) { waitingForNext = true; if (!active) setMessage("Loading…"); return; }
+    waitingForNext = false;
+    const old = active;
+    next.st = "active";
+    next.v.muted = ui.muted;
+    next.v.classList.add("on");
+    if (old) old.v.classList.remove("on");
+    const p = next.v.play();
+    if (p) p.catch(() => { if (!next.v.muted) { next.v.muted = true; next.v.play().catch(() => {}); } });
+    active = next;
+    const seg = speed() === "var" ? 1 + rint(MAX_SECONDS) : speed();
+    deadline = performance.now() + seg * 1000;
+    setCaption(next.clip);
+    if (old) { releaseVideo(old.v); old.st = "idle"; old.clip = null; prepareSlot(old); }
+  }
+
+  return {
+    set, unit: "seconds",
+    speeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, "var"],
+    label: (v) => v === "var" ? "random" : String(v),
+    start() {
+      ensureSlots();
+      running = true; gen++;
+      readyQ = []; active = null; waitingForNext = true; deadline = Infinity;
+      set.warmUp();
+      setMessage("Loading…");
+      slots.forEach(prepareSlot);
+    },
+    stop() {
+      running = false; gen++;
+      readyQ = []; active = null; waitingForNext = false; deadline = Infinity;
+      if (slots) for (const s of slots) {
+        s.v.classList.remove("on");
+        releaseVideo(s.v);
+        if (s.st !== "loading") { s.st = "idle"; s.clip = null; }
+      }
+    },
+    tick(now) { if (running && !ui.paused && !waitingForNext && now >= deadline - 4) cut(); },
+    pause(p) {
+      if (!active) return;
+      if (p) { active.v.pause(); pausedLeft = Math.max(0, deadline - performance.now()); }
+      else { active.v.play().catch(() => {}); deadline = performance.now() + pausedLeft; }
+    },
+    skip() { if (!ui.paused) cut(); },
+    choicesChanged() {
+      if (!running) return;
+      gen++;
+      for (const s of readyQ) { releaseVideo(s.v); s.st = "idle"; s.clip = null; }
+      readyQ = [];
+      set.warmUp();
+      slots.forEach(prepareSlot);
+    },
+    setMuted(m) { if (active) active.v.muted = m; },
+    redraw() {}
+  };
+})();
+
+/* ============================================================
+   IMAGE ENGINE
+   Many images download in parallel and are fully decoded before
+   their turn; a frame-accurate clock draws them on a canvas.
+   ============================================================ */
+const ImageEngine = (() => {
+  const set = makeSourceSet(IMAGE_SOURCES);
+  const LOADERS      = SAVE_DATA ? 3 : IS_MOBILE ? 6 : 12;
+  const LOADERS_FAST = SAVE_DATA ? 4 : IS_MOBILE ? 10 : 24;
+  const QUEUE_MAX    = IS_MOBILE ? 30 : 70;
+  const canvas = $("#screen"), ctx = canvas.getContext("2d");
+  let running = false, runId = 0, gen = 0;
+  let queue = [], recentShown = [], current = null, deadline = 0, pausedLeft = 0, lastCaption = 0;
+
+  const isFast = () => ui.speed.image === "max" || (typeof ui.speed.image === "number" && ui.speed.image <= 0.04);
+
+  function loadImage(url) {
+    return new Promise(resolve => {
+      const img = new Image();
+      img.referrerPolicy = "no-referrer";
+      img.decoding = "async";
+      const t = setTimeout(() => { img.src = ""; resolve(null); }, 10000);
+      img.onerror = () => { clearTimeout(t); resolve(null); };
+      img.onload = () => {
+        clearTimeout(t);
+        if (img.naturalWidth < 120 || img.naturalHeight < 120) return resolve(null);
+        (img.decode ? img.decode() : Promise.resolve()).then(() => resolve(img), () => resolve(img));
+      };
+      img.src = url;
+    });
+  }
+
+  async function loaderLoop(index, myRun) {
+    while (running && myRun === runId) {
+      if (index >= (isFast() ? LOADERS_FAST : LOADERS)) { await sleep(300); continue; }
+      if (queue.length >= QUEUE_MAX) { await sleep(60); continue; }
+      const g = gen;
+      const item = await set.getItem();
+      if (!running || myRun !== runId) return;
+      if (!item) { await sleep(1500); continue; }
+      const img = await loadImage(item.url);
+      if (!running || myRun !== runId || g !== gen) continue;
+      if (!img) { if (!set.SOURCES[item.key].lossy) set.noteFail(item.key, 0.34); continue; }
+      set.SOURCES[item.key].fails = Math.max(0, set.SOURCES[item.key].fails - 1);
+      queue.push({ img, meta: item });
+    }
+  }
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(innerWidth * dpr);
+    canvas.height = Math.round(innerHeight * dpr);
+    if (current) draw(current.img); else clear();
+  }
+  function clear() { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+  function draw(img) {
+    const W = canvas.width, H = canvas.height;
+    clear();
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    const sc = ui.fill ? Math.max(W / iw, H / ih) : Math.min(W / iw, H / ih);
+    const w = iw * sc, h = ih * sc;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
+  }
+
+  const SPEEDS = [0.02, 0.04, 0.08, 0.15, 0.25, 0.5, 1, 2, 3];
+  const nextInterval = () => ui.speed.image === "max" ? 0 : (ui.speed.image === "var" ? pick(SPEEDS) : ui.speed.image) * 1000;
+
+  function show(entry, now, interval) {
+    draw(entry.img);
+    if (!entry.reused) { recentShown.push(entry); if (recentShown.length > 60) recentShown.shift(); }
+    current = entry;
+    if (interval >= 330 || now - lastCaption > 330) { setCaption(entry.meta); lastCaption = now; }
+  }
+  // When no new image is ready in time, a recent one comes back, so the rhythm never slows down
+  function nextEntry() {
+    const fresh = queue.shift();
+    if (fresh) return fresh;
+    const pool = recentShown.filter(e => e !== current);
+    return pool.length ? { ...pick(pool), reused: true } : null;
+  }
+
+  return {
+    set, unit: "seconds",
+    speeds: ["max", ...SPEEDS, "var"],
+    label: (v) => v === "var" ? "random" : v === "max" ? "max" : (v < 1 ? String(v).replace(/^0/, "") : String(v)),
+    start() {
+      running = true; runId++; gen++;
+      queue = []; recentShown = []; current = null; deadline = 0;
+      resize();
+      set.warmUp();
+      setMessage("Loading…");
+      for (let i = 0; i < LOADERS_FAST; i++) loaderLoop(i, runId);
+    },
+    stop() { running = false; runId++; queue = []; recentShown = []; current = null; clear(); },
+    tick(now) {
+      if (!running || ui.paused) return;
+      if (!current) {
+        const first = queue.shift();
+        if (first) { const iv = nextInterval(); show(first, now, iv); deadline = now + iv; }
+      } else if (now >= deadline - 4) {
+        const e = nextEntry();
+        const iv = nextInterval();
+        if (e) show(e, now, iv);
+        deadline = (now - deadline > iv) ? now + iv : deadline + iv;
+      }
+    },
+    pause(p) {
+      if (!current) return;
+      if (p) { pausedLeft = Math.max(0, deadline - performance.now()); setCaption(current.meta); }
+      else deadline = performance.now() + pausedLeft;
+    },
+    skip() {
+      if (!current) return;
+      if (ui.paused) { const e = nextEntry(); if (e) { show(e, performance.now(), 1000); setCaption(e.meta); } }
+      else deadline = 0;
+    },
+    choicesChanged() { if (!running) return; gen++; queue = []; recentShown = []; set.warmUp(); },
+    setMuted() {},
+    redraw() { if (current) draw(current.img); },
+    resize() { if (running) resize(); }
+  };
+})();
+
+/* ============================================================
+   TEXT ENGINE
+   Fragments of text are gathered in advance; each one is set as
+   large as the screen allows and changes at the chosen rhythm.
+   ============================================================ */
+const TextEngine = (() => {
+  const set = makeSourceSet(TEXT_SOURCES);
+  const LOADERS = IS_MOBILE ? 4 : 8;
+  const QUEUE_MAX = 250;
+  const p = $("#textP");
+  let running = false, runId = 0, gen = 0;
+  let queue = [], recentShown = [], current = null, deadline = 0, pausedLeft = 0, lastCaption = 0;
+
+  async function loaderLoop(myRun) {
+    while (running && myRun === runId) {
+      if (queue.length >= QUEUE_MAX) { await sleep(80); continue; }
+      const g = gen;
+      const item = await set.getItem();
+      if (!running || myRun !== runId) return;
+      if (!item) { await sleep(1200); continue; }
+      if (g !== gen) continue;
+      queue.push({ meta: item });
+    }
+  }
+
+  // Font size: as large as possible while the whole text fits on screen
+  function fit() {
+    const len = Math.max(1, (p.textContent || "").length);
+    const W = innerWidth * 0.84, H = innerHeight * (IS_MOBILE ? 0.5 : 0.62);
+    let fs = Math.sqrt((0.5 * W * H) / (0.62 * len));
+    fs = Math.max(15, Math.min(fs, Math.min(innerWidth, innerHeight) * 0.16, 150));
+    p.style.fontSize = fs + "px";
+  }
+
+  const SPEEDS = [0.02, 0.04, 0.08, 0.15, 0.25, 0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const nextInterval = () => ui.speed.text === "max" ? 0 : (ui.speed.text === "var" ? pick(SPEEDS) : ui.speed.text) * 1000;
+
+  function show(entry, now, interval) {
+    p.textContent = entry.meta.text;
+    p.lang = entry.meta.lang || "";
+    fit();
+    if (!entry.reused) { recentShown.push(entry); if (recentShown.length > 80) recentShown.shift(); }
+    current = entry;
+    if (interval >= 330 || now - lastCaption > 330) { setCaption(entry.meta); lastCaption = now; }
+  }
+  function nextEntry() {
+    const fresh = queue.shift();
+    if (fresh) return fresh;
+    const pool = recentShown.filter(e => e !== current);
+    return pool.length ? { ...pick(pool), reused: true } : null;
+  }
+
+  return {
+    set, unit: "seconds",
+    speeds: ["max", ...SPEEDS, "var"],
+    label: (v) => v === "var" ? "random" : v === "max" ? "max" : (v < 1 ? String(v).replace(/^0/, "") : String(v)),
+    start() {
+      running = true; runId++; gen++;
+      queue = []; recentShown = []; current = null; deadline = 0;
+      p.textContent = "";
+      set.warmUp();
+      setMessage("Loading…");
+      for (let i = 0; i < LOADERS; i++) loaderLoop(runId);
+    },
+    stop() { running = false; runId++; queue = []; recentShown = []; current = null; p.textContent = ""; },
+    tick(now) {
+      if (!running || ui.paused) return;
+      if (!current) {
+        const first = queue.shift();
+        if (first) { const iv = nextInterval(); show(first, now, iv); deadline = now + iv; }
+      } else if (now >= deadline - 4) {
+        const e = nextEntry();
+        const iv = nextInterval();
+        if (e) show(e, now, iv);
+        deadline = (now - deadline > iv) ? now + iv : deadline + iv;
+      }
+    },
+    pause(pz) {
+      if (!current) return;
+      if (pz) { pausedLeft = Math.max(0, deadline - performance.now()); setCaption(current.meta); }
+      else deadline = performance.now() + pausedLeft;
+    },
+    skip() {
+      if (!current) return;
+      if (ui.paused) { const e = nextEntry(); if (e) { show(e, performance.now(), 1000); setCaption(e.meta); } }
+      else deadline = 0;
+    },
+    choicesChanged() { if (!running) return; gen++; queue = []; recentShown = []; set.warmUp(); },
+    setMuted() {},
+    redraw() { if (current) fit(); },
+    resize() { if (current) fit(); }
+  };
+})();
+
+/* ============================================================
+   AUDIO ENGINE
+   A pool of hidden <audio> elements preloads clips in parallel,
+   each seeked to a random point and buffered for the whole
+   fragment; cuts ramp volume down/up over a few milliseconds so
+   mid-waveform jumps don't click, then the next one takes over.
+   ============================================================ */
+const AudioEngine = (() => {
+  const set = makeSourceSet(AUDIO_SOURCES);
+  const MAX_SECONDS = 10;
+  const SLOT_COUNT = SAVE_DATA ? 2 : IS_MOBILE ? 3 : 5;
+  const FADE_MS = 35;
+  let slots = null, readyQ = [], active = null, gen = 0, running = false;
+  let deadline = Infinity, pausedLeft = 0, waitingForNext = false;
+
+  const speed = () => ui.speed.audio;
+  const neededSeconds = () => (speed() === "var" ? MAX_SECONDS : speed()) + 0.4;
+
+  function ensureSlots() {
+    if (slots) return;
+    slots = Array.from({ length: SLOT_COUNT }, () => {
+      const a = new Audio();
+      a.preload = "auto"; a.volume = 0;
+      return { a, st: "idle", clip: null };
+    });
+  }
+  function releaseAudio(a) { a.onloadedmetadata = a.onseeked = a.onerror = null; a.pause(); a.removeAttribute("src"); a.load(); a.volume = 0; }
+
+  // Plain volume ramp (not Web Audio/GainNode): works even when a source's
+  // media file lacks CORS headers, which would otherwise mute it silently.
+  function fade(a, from, to, ms, done) {
+    const start = performance.now();
+    a.volume = from;
+    (function step(now) {
+      const t = Math.min(1, (now - start) / ms);
+      a.volume = from + (to - from) * t;
+      if (t < 1) requestAnimationFrame(step); else if (done) done();
+    })(start);
+  }
+
+  function loadInto(a, clip, need) {
+    return new Promise(resolve => {
+      let done = false, poll = null, start = 0, dur = 0, seeked = false;
+      const finish = (ok) => {
+        if (done) return; done = true; clearTimeout(hard); clearInterval(poll);
+        a.onloadedmetadata = a.onseeked = a.onerror = null; resolve(ok);
+      };
+      const hard = setTimeout(() => finish(seeked && a.readyState >= 3), 12000);
+      const buffered = () => {
+        const target = Math.min(dur, start + need) - 0.05;
+        for (let i = 0; i < a.buffered.length; i++) if (a.buffered.start(i) <= start + 0.1 && a.buffered.end(i) >= target) return true;
+        return false;
+      };
+      a.onerror = () => finish(false);
+      a.onloadedmetadata = () => {
+        dur = a.duration;
+        if (!isFinite(dur) || dur < 0.6) return finish(false);
+        start = Math.random() * Math.max(0, dur - need - 0.2);
+        a.currentTime = start;
+      };
+      a.onseeked = () => { if (seeked) return; seeked = true; poll = setInterval(() => { if (buffered() || (a.readyState >= 4 && dur - start < need)) finish(true); }, 120); };
+      a.src = clip.url; a.load();
+    });
+  }
+
+  async function prepareSlot(slot) {
+    if (!running || slot.st !== "idle") return;
+    slot.st = "loading";
+    const g = gen;
+    while (running && g === gen) {
+      const clip = await set.getItem();
+      if (!running || g !== gen) break;
+      if (!clip) { await sleep(2500); continue; }
+      const ok = await loadInto(slot.a, clip, neededSeconds());
+      if (!running || g !== gen) break;
+      if (ok) {
+        set.SOURCES[clip.key].fails = 0;
+        slot.clip = clip; slot.st = "ready"; readyQ.push(slot);
+        if (waitingForNext && !ui.paused) cut();
+        return;
+      }
+      set.noteFail(clip.key);
+    }
+    releaseAudio(slot.a); slot.st = "idle"; slot.clip = null;
+    if (running) prepareSlot(slot);
+  }
+
+  function cut() {
+    const next = readyQ.shift();
+    if (!next) { waitingForNext = true; if (!active) setMessage("Loading…"); return; }
+    waitingForNext = false;
+    const old = active;
+    next.st = "active";
+    next.a.volume = 0;
+    const p = next.a.play();
+    if (p) p.catch(() => {});
+    fade(next.a, 0, ui.muted ? 0 : 1, FADE_MS);
+    active = next;
+    const seg = speed() === "var" ? 1 + rint(MAX_SECONDS) : speed();
+    deadline = performance.now() + seg * 1000;
+    setCaption(next.clip);
+    if (old) fade(old.a, old.a.volume, 0, FADE_MS, () => { releaseAudio(old.a); old.st = "idle"; old.clip = null; prepareSlot(old); });
+  }
+
+  return {
+    set, unit: "seconds",
+    speeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, "var"],
+    label: (v) => v === "var" ? "random" : String(v),
+    start() {
+      ensureSlots();
+      running = true; gen++;
+      readyQ = []; active = null; waitingForNext = true; deadline = Infinity;
+      set.warmUp();
+      setMessage("Loading…");
+      slots.forEach(prepareSlot);
+    },
+    stop() {
+      running = false; gen++;
+      readyQ = []; active = null; waitingForNext = false; deadline = Infinity;
+      if (slots) for (const s of slots) { releaseAudio(s.a); if (s.st !== "loading") { s.st = "idle"; s.clip = null; } }
+    },
+    tick(now) { if (running && !ui.paused && !waitingForNext && now >= deadline - 4) cut(); },
+    pause(p) {
+      if (!active) return;
+      if (p) { active.a.pause(); pausedLeft = Math.max(0, deadline - performance.now()); }
+      else { active.a.play().catch(() => {}); deadline = performance.now() + pausedLeft; }
+    },
+    skip() { if (!ui.paused) cut(); },
+    choicesChanged() {
+      if (!running) return;
+      gen++;
+      for (const s of readyQ) { releaseAudio(s.a); s.st = "idle"; s.clip = null; }
+      readyQ = [];
+      set.warmUp();
+      slots.forEach(prepareSlot);
+    },
+    setMuted(m) { if (active) fade(active.a, active.a.volume, m ? 0 : 1, 120); },
+    redraw() {}
+  };
+})();
+
+const ENGINES = { video: VideoEngine, image: ImageEngine, text: TextEngine, audio: AudioEngine };
+const engine = () => ENGINES[ui.mode];
+
+// One clock for everything, in step with the screen
+(function loop(now) { if (ui.started && engine()) engine().tick(now); requestAnimationFrame(loop); })(performance.now());
+setInterval(() => { if (document.hidden && ui.started && engine()) engine().tick(performance.now()); }, 200);
+addEventListener("resize", () => { ImageEngine.resize(); TextEngine.resize(); });
+
+/* ============================================================
+   INTERFACE
+   ============================================================ */
+function startMode(mode) {
+  if (!ENGINES[mode]) return;
+  if (ui.mode && ui.mode !== mode) engine().stop();
+  const same = ui.mode === mode && ui.started;
+  ui.mode = mode;
+  document.body.classList.remove("m-video", "m-image", "m-text", "m-audio", "intro");
+  document.body.classList.add("m-" + mode);
+  document.querySelectorAll("#modes button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
+  ui.paused = false; $("#bPause").textContent = "pause";
+  renderSpeeds(); renderSources(); saveToURL();
+  if (!same) engine().start();
+  ui.started = true;
+  nudge();
+}
+document.querySelectorAll("#intro button, #modes button").forEach(b => b.addEventListener("click", () => startMode(b.dataset.mode)));
+
+// Rhythm
+const speedsEl = $("#speeds");
+function renderSpeeds() {
+  speedsEl.querySelectorAll("button").forEach(b => b.remove());
+  const e = engine(); if (!e) return;
+  for (const val of e.speeds) {
+    const b = document.createElement("button");
+    b.textContent = e.label(val);
+    b.setAttribute("aria-pressed", String(val === ui.speed[ui.mode]));
+    b.addEventListener("click", () => { ui.speed[ui.mode] = val; renderSpeeds(); saveToURL(); });
+    speedsEl.appendChild(b);
+  }
+}
+
+// What: ALL or the visitor's words (shared by the three modes)
+function renderWhat() {
+  $("#bAll").setAttribute("aria-pressed", String(!ui.words.length));
+  const box = $("#wordChips"); box.innerHTML = "";
+  for (const w of ui.words) {
+    const b = document.createElement("button");
+    b.textContent = w; b.setAttribute("aria-label", "Remove " + w);
+    b.addEventListener("click", () => { ui.words = ui.words.filter(x => x !== w); whatChanged(); });
+    box.appendChild(b);
+  }
+  $("#bWhat").textContent = ui.words.length ? ui.words.join(", ") : "ALL";
+}
+function whatChanged() { renderWhat(); renderSources(); saveToURL(); if (engine()) engine().choicesChanged(); }
+$("#bAll").addEventListener("click", () => { if (ui.words.length) { ui.words = []; whatChanged(); } });
+$("#wordInput").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== ",") return;
+  e.preventDefault();
+  const parts = e.target.value.split(",").map(cleanWord).filter(Boolean);
+  e.target.value = "";
+  let added = false;
+  for (const w of parts) if (!ui.words.includes(w)) { ui.words.push(w); added = true; }
+  if (added) whatChanged();
+});
+
+// Sources of the current mode
+function renderSources() {
+  const ul = $("#sourceList"); ul.innerHTML = "";
+  const e = engine(); if (!e) return;
+  const set = e.set;
+  const keys = Object.keys(set.SOURCES).sort((a, b) => set.hasKey(b) - set.hasKey(a));   // sources that need a key go last
+  for (const k of keys) {
+    const li = document.createElement("li");
+    const label = document.createElement("label");
+    const input = document.createElement("input"); input.type = "checkbox";
+    input.checked = set.enabled[k] && set.hasKey(k); input.disabled = !set.hasKey(k);
+    input.addEventListener("change", () => {
+      set.enabled[k] = input.checked; e.choicesChanged();
+      if (!set.available().length) setMessage("No source selected. Open “what” → “sources” and tick some.");
+    });
+    const box = document.createElement("span"); box.className = "box";
+    const name = document.createElement("span"); name.textContent = set.SOURCES[k].label;
+    label.append(input, box, name);
+    li.appendChild(label);
+    const st = set.status(k);
+    if (st) {
+      const n = document.createElement("span"); n.className = "note"; n.textContent = st;
+      if (set.SOURCES[k].downUntil > Date.now()) {
+        const r = document.createElement("button"); r.className = "retry"; r.textContent = "retry now";
+        r.addEventListener("click", () => { set.SOURCES[k].downUntil = 0; set.SOURCES[k].fails = 0; renderSources(); set.warmUp(); });
+        n.appendChild(r);
+      }
+      li.appendChild(n);
+    }
+    ul.appendChild(li);
+  }
+}
+setInterval(() => { if (!$("#sourceBody").hidden) renderSources(); }, 5000);
+function setAllSources(on) {
+  const e = engine(); if (!e) return;
+  for (const k of Object.keys(e.set.SOURCES)) e.set.enabled[k] = on && e.set.hasKey(k) && !e.set.SOURCES[k].defaultOff;
+  renderSources(); e.choicesChanged();
+  if (!e.set.available().length) setMessage("No source selected. Open “what” → “sources” and tick some.");
+}
+$("#srcAll").addEventListener("click", () => setAllSources(true));
+$("#srcNone").addEventListener("click", () => setAllSources(false));
+
+// Blur (0-40 px), shared by the three modes
+const blurRange = $("#blurRange");
+function applyBlur() {
+  stage.style.setProperty("--blur", ui.blur + "px");
+  blurRange.value = ui.blur;
+  $("#blurValue").textContent = ui.blur ? ui.blur + " px" : "off";
+}
+blurRange.addEventListener("input", () => { ui.blur = +blurRange.value; applyBlur(); });
+blurRange.addEventListener("change", saveToURL);
+
+// Choices live in the page address: ?m=image&q=dog,rain&s=.08&blur=10
+function saveToURL() {
+  const p = new URLSearchParams();
+  if (ui.mode) p.set("m", ui.mode);
+  if (ui.words.length) p.set("q", ui.words.join(","));
+  if (ui.mode) p.set("s", String(ui.speed[ui.mode]));
+  if (ui.blur) p.set("blur", String(ui.blur));
+  const s = p.toString();
+  try { history.replaceState(null, "", s ? "?" + s : location.pathname); } catch {}
+}
+function loadFromURL() {
+  const p = new URLSearchParams(location.search);
+  (p.get("q") || "").split(",").map(cleanWord).filter(Boolean).forEach(w => { if (!ui.words.includes(w)) ui.words.push(w); });
+  const bl = +p.get("blur");
+  if (bl > 0) ui.blur = Math.min(40, Math.round(bl));
+  const m = p.get("m"), s = p.get("s");
+  if (ENGINES[m] && s) {
+    const val = s === "var" || s === "max" ? s : +s;
+    if (ENGINES[m].speeds.includes(val)) ui.speed[m] = val;
+  }
+}
+
+function setPanel(open) {
+  document.body.classList.toggle("panel", open);
+  $("#bWhat").setAttribute("aria-expanded", String(open));
+  if (open) { if (!IS_MOBILE) $("#wordInput").focus(); }
+  else setSourcesOpen(false);   // collapsed again next time "what" is opened
+  nudge();
+}
+// The source checklist stays collapsed until the visitor clicks "sources" to reveal it
+function setSourcesOpen(open) {
+  $("#sourceBody").hidden = !open;
+  $("#srcToggle").setAttribute("aria-expanded", String(open));
+  if (open) renderSources();
+}
+$("#srcToggle").addEventListener("click", () => setSourcesOpen($("#sourceBody").hidden));
+function toggleSound() { ui.muted = !ui.muted; engine().setMuted(ui.muted); $("#bSound").textContent = ui.muted ? "sound off" : "sound on"; }
+function togglePause() {
+  if (!ui.started) return;
+  ui.paused = !ui.paused;
+  $("#bPause").textContent = ui.paused ? "resume" : "pause";
+  document.body.classList.toggle("paused", ui.paused);
+  engine().pause(ui.paused);
+}
+function skip() { if (ui.started) engine().skip(); }
+function toggleFit() { ui.fill = !ui.fill; stage.classList.toggle("fill", ui.fill); $("#bFit").textContent = ui.fill ? "fit" : "fill"; ImageEngine.redraw(); }
+function toggleCaption() { caption.classList.toggle("hidden"); $("#bCaption").textContent = caption.classList.contains("hidden") ? "caption off" : "caption on"; }
+function toggleFull() {
+  const d = document;
+  if (!d.fullscreenElement && !d.webkitFullscreenElement) { const el = d.documentElement; (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el); }
+  else (d.exitFullscreen || d.webkitExitFullscreen || (() => {})).call(d);
+}
+$("#bWhat").addEventListener("click", () => setPanel(!document.body.classList.contains("panel")));
+$("#bSound").addEventListener("click", toggleSound);
+$("#bPause").addEventListener("click", togglePause);
+$("#bSkip").addEventListener("click", skip);
+$("#bFit").addEventListener("click", toggleFit);
+$("#bCaption").addEventListener("click", toggleCaption);
+$("#bFull").addEventListener("click", toggleFull);
+if (!document.fullscreenEnabled && !document.webkitFullscreenEnabled) $("#bFull").hidden = true;
+
+// About window
+const about = $("#about");
+const labels = (S) => Object.values(S).map(x => x.label).join(", ");
+$("#aboutVideo").textContent = labels(VIDEO_SOURCES);
+$("#aboutImage").textContent = labels(IMAGE_SOURCES);
+$("#aboutText").textContent = labels(TEXT_SOURCES);
+$("#aboutAudio").textContent = labels(AUDIO_SOURCES);
+function setAbout(open) {
+  about.hidden = !open;
+  if (open) { setPanel(false); $("#aboutClose").focus(); } else { $("#bAbout").focus(); nudge(); }
+}
+$("#bAbout").addEventListener("click", () => setAbout(true));
+// A click (or tap) anywhere closes it; links keep working, and selecting text doesn't close it
+about.addEventListener("click", (e) => {
+  if (e.target.closest("a")) return;
+  if (String(getSelection() || "").length) return;
+  setAbout(false);
+});
+
+// Keyboard
+document.addEventListener("keydown", (e) => {
+  if (!about.hidden) { if (e.key === "Escape") setAbout(false); return; }
+  if (e.target.id === "wordInput") { if (e.key === "Escape") setPanel(false); return; }
+  if (e.target.id === "blurRange" && e.key.startsWith("Arrow")) return;
+  if (!ui.started) return;
+  const k = e.key.toLowerCase();
+  if (k === " ") { e.preventDefault(); togglePause(); }
+  else if (k === "arrowright" || k === "n") skip();
+  else if (k === "f") toggleFull();
+  else if (k === "m") toggleSound();
+  else if (k === "i") toggleCaption();
+  else if (k === "c") toggleFit();
+  else if (k === "1") startMode("video");
+  else if (k === "2") startMode("image");
+  else if (k === "3") startMode("text");
+  else if (k === "4") startMode("audio");
+  else if (k === "w") { e.preventDefault(); setPanel(!document.body.classList.contains("panel")); }
+  else if (k === "escape") setPanel(false);
+});
+
+// Controls appear with the mouse, or with a tap on the screen
+let idleTimer = null;
+function nudge() {
+  document.body.classList.remove("idle");
+  clearTimeout(idleTimer);
+  if (ui.started && !document.body.classList.contains("panel")) idleTimer = setTimeout(() => document.body.classList.add("idle"), IS_MOBILE ? 4000 : 2500);
+}
+["keydown", "focusin"].forEach(ev => document.addEventListener(ev, nudge, { passive: true }));
+document.addEventListener("pointermove", (e) => { if (e.pointerType === "mouse") nudge(); }, { passive: true });
+document.addEventListener("touchstart", (e) => { if (e.target.closest("#controls")) nudge(); }, { passive: true });
+stage.addEventListener("click", () => {
+  if (!ui.started) return;
+  const b = document.body.classList;
+  if (b.contains("panel")) setPanel(false);
+  else if (b.contains("idle")) nudge();
+  else { clearTimeout(idleTimer); b.add("idle"); }
+});
+// A click anywhere outside the "what" panel closes it; clicks inside it (words, sources, checkboxes) don't
+document.addEventListener("click", (e) => {
+  if (!document.body.classList.contains("panel")) return;
+  if (e.target.closest("#panel") || e.target.closest("#bWhat")) return;
+  setPanel(false);
+});
+const controlsEl = $("#controls");
+new ResizeObserver(() => {
+  const pad = parseFloat(getComputedStyle(controlsEl).paddingTop) || 0;
+  document.documentElement.style.setProperty("--ch", (controlsEl.offsetHeight - pad + 6) + "px");
+}).observe(controlsEl);
+
+// When the visitor hovers or touches a PLAY, that mode starts testing its sources, so it begins sooner
+loadFromURL();
+renderWhat();
+applyBlur();
+const warmed = {};
+document.querySelectorAll("#intro button").forEach(b => {
+  const warm = () => { const m = b.dataset.mode; if (!warmed[m]) { warmed[m] = true; ENGINES[m].set.warmUp(true); } };
+  ["pointerenter", "touchstart", "focus"].forEach(ev => b.addEventListener(ev, warm, { passive: true }));
+});
+</script>
+</body>
+</html>
